@@ -1,6 +1,5 @@
 [Unit]
 Description=Rule-driven sleep inhibitor for KDE Plasma
-Documentation=https://github.com/eko-adi-wicaksono/plasma-keepawake
 # Needs the session D-Bus bus (MPRIS/logind calls) and a running Plasma
 # session (this is a desktop tool, not something that makes sense headless).
 PartOf=graphical-session.target
@@ -8,10 +7,10 @@ After=graphical-session.target
 
 [Service]
 Type=simple
-# Adjust if installed elsewhere - `cargo install --path daemon --root ~/.local`
-# puts the binary at %h/.local/bin/plasma-keepawaked. A PKGBUILD (milestone 8,
-# still pending) would install to /usr/bin instead.
-ExecStart=%h/.local/bin/plasma-keepawaked --run
+# Installed via the PKGBUILD in this directory, which puts the binary at
+# /usr/bin. If you instead built it with `cargo install --path daemon
+# --root ~/.local`, change this to %h/.local/bin/plasma-keepawaked.
+ExecStart=/usr/bin/plasma-keepawaked --run
 Restart=on-failure
 RestartSec=5
 

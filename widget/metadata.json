@@ -11,6 +11,7 @@
         "Description": "Status and controls for the plasma-keepawaked rule-driven sleep inhibitor",
         "Icon": "preferences-system-power-management",
         "Id": "org.plasmakeepawake.widget",
+        "License": "GPL-3.0-or-later",
         "Name": "Plasma Keepawake"
     },
     "X-Plasma-API-Minimum-Version": "6.0"

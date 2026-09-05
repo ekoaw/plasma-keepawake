@@ -333,6 +333,82 @@ on disk; editing an existing rule's expression via the pencil icon updated
 both the same way. Both were cross-checked against `busctl`/`cat` after
 each step rather than trusting the widget's own display alone.
 
+## Packaging and the notify feedback-loop bug (milestone 8, done)
+
+License: GPL-3.0-or-later (`LICENSE`, fetched verbatim from
+`gnu.org/licenses/gpl-3.0.txt` rather than retyped from memory — it's a
+legal document, not something to risk getting subtly wrong). Set in
+`daemon/Cargo.toml`'s `license` field and `widget/metadata.json`'s
+`License` field too.
+
+`packaging/PKGBUILD` builds the daemon (`cargo build --release`) and
+installs it plus the systemd unit plus the widget's KPackage into a real
+package — verified with an actual `makepkg` build, not just written and
+assumed correct. It builds from this local checkout (`$startdir/..`)
+rather than a downloaded tarball, since there's no published upstream URL
+yet; noted in the PKGBUILD itself as not AUR-submission-ready as-is.
+
+This *was* actually installed on this machine: `pacman -U` the built
+package, real config written to `~/.config/plasma-keepawake/config.json`
+(the example config, per request), `systemctl --user enable --now
+plasma-keepawaked.service`, and the widget added to the real panel via
+"Add Widgets" (which initially didn't show it at all — a running
+`plasmashell` doesn't discover newly-installed system plasmoids on its
+own, regardless of install method (`pacman` or `kpackagetool6 --install`
+both failed to appear until `systemctl --user restart
+plasma-plasmashell.service`, done with explicit confirmation since it
+visibly flickers the whole desktop).
+
+**A real, serious bug surfaced during this real deployment**, not caught
+by any earlier testing because earlier tests never ran the daemon long
+enough against its real config path with real edits: `AddRule`/
+`UpdateRule`/`RemoveRule` (and, it turns out, the user genuinely using the
+widget's editor on the real panel) triggered runaway CPU — 0% baseline
+climbing past 40%+ within a couple minutes of an edit, sustained
+indefinitely, discovered via `ps` showing the service's average CPU over
+its lifetime and confirmed by deliberately reproducing it against a
+disposable test daemon rather than continuing to experiment on the live
+one (which was stopped immediately once the anomaly was noticed).
+
+Root cause, found via temporary `eprintln!` instrumentation on the watch
+callback (first attempt was contaminated by redirecting the debug
+daemon's own stdout into the *same directory being watched*, which is a
+different, self-inflicted feedback loop worth knowing about but not the
+real bug — redone with the log elsewhere): `watch_config`'s callback
+reloaded on *any* event whose path matched the config file, with no
+filter on event *kind*. `DaemonState::reload()` opens and reads that same
+file, which itself generates an `Access(Open)` inotify event on it — so
+reload triggers a read, the read generates an access event, the access
+event triggers another reload, forever. Each iteration is cheap (compile
+a few Rhai expressions) but nonzero, so it manifests as climbing CPU
+rather than an instant crash — exactly the kind of bug that's invisible
+in a quick manual test (milestone 4's original hot-reload verification
+only tested a *hand-edited* file once, and milestones didn't include a
+CPU-usage check after a `persist()`-triggered write specifically).
+
+Fix: only reload on `EventKind::is_create()` or `EventKind::is_modify()`,
+explicitly excluding `is_access()` (`main.rs`'s `watch_config`). A
+legitimate `persist()` write still triggers exactly one harmless
+self-reload (a `Modify`/`Create` event on the real content change), which
+is correct and intended — the bug was reacting to reads, not to writes.
+
+Verified the fix three ways: (1) reproduced the exact runaway-CPU
+sequence against a disposable daemon pre-fix, confirmed the same fix
+resolves it post-fix (CPU settles back toward 0% instead of climbing,
+sampled repeatedly over time rather than trusting one snapshot); (2)
+redeployed the fixed build to the real installed service and watched its
+CPU stay flat through a real `busctl`-driven edit; (3) had the user add a
+rule through the actual widget on their actual panel and confirmed CPU
+stayed flat through that too, not just through my own scripted D-Bus
+calls. Test rules added during this verification were removed from the
+real config afterward.
+
+Lesson for future testing: any change touching the config-reload path
+needs a "leave it running for a while after an edit, then check CPU"
+step, not just "confirm the edit took effect" — the earlier milestones'
+verification confirmed *correctness* of hot-reload but never checked its
+*steady-state cost*, which is exactly where this bug lived.
+
 ## Milestones
 
 1. ✅ **Daemon skeleton** — config load, Rhai engine with env-var-backed
@@ -366,20 +442,15 @@ each step rather than trusting the widget's own display alone.
 7. ✅ **Widget rule editing** — `AddRule`/`UpdateRule`/`RemoveRule` on the
    daemon plus an editor in the widget (Add rule form, inline expr editing,
    remove button per rule). See "Rule editing" below.
-8. **Packaging** — `PKGBUILD` for the daemon binary + systemd unit,
-   `kpackagetool6`-installable plasmoid, decide license (open decision
-   below).
-
-Note on the unit file: writing `packaging/plasma-keepawaked.service` is
-just putting the file in the repo. `systemctl --user enable --now` makes
-the daemon start on every future login and starts it immediately on this
-machine — a persistent, visible change to the session — so that's held
-back as a separate step until it's actually wanted, not bundled into
-"wrote the packaging file."
+8. ✅ **Packaging** — done and actually installed/enabled on this machine
+   (not just written), including a real production bug found and fixed
+   along the way. See "Packaging and the notify feedback-loop bug" below.
 
 ## Open decisions
 
-- License — not chosen yet.
+- ~~License — not chosen yet.~~ GPL-3.0-or-later (milestone 8) — `LICENSE`
+  (verbatim from gnu.org, not retyped from memory), `daemon/Cargo.toml`'s
+  `license` field, and `widget/metadata.json`'s `License` field.
 - Whether `process_running` polling interval should be configurable
   per-rule or global (default to global, e.g. 5s, until there's a reason
   not to).

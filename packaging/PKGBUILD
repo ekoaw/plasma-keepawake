@@ -1,0 +1,40 @@
+# Maintainer: Eko Adi Wicaksono <eko.adi.wicaksono@gmail.com>
+#
+# Builds from this local checkout (run `makepkg -si` from inside
+# packaging/) rather than a downloaded source tarball - there's no
+# published upstream URL yet, so this isn't AUR-submission-ready as-is.
+# If/when this gets a real repo URL, switch `source=()` to a proper
+# `source=("$pkgname-$pkgver.tar.gz::https://.../v$pkgver.tar.gz")` +
+# sha256sums and drop the $startdir/.. references below.
+
+pkgname=plasma-keepawake
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Rule-driven sleep inhibitor for KDE Plasma (daemon + widget)"
+arch=('x86_64')
+license=('GPL-3.0-or-later')
+depends=('systemd' 'plasma-workspace')
+makedepends=('cargo')
+source=()
+sha256sums=()
+
+build() {
+  cd "$startdir/../daemon"
+  cargo build --release --locked
+}
+
+package() {
+  install -Dm755 "$startdir/../daemon/target/release/plasma-keepawaked" \
+    "$pkgdir/usr/bin/plasma-keepawaked"
+
+  install -Dm644 "$startdir/plasma-keepawaked.service" \
+    "$pkgdir/usr/lib/systemd/user/plasma-keepawaked.service"
+
+  install -Dm644 "$startdir/../widget/metadata.json" \
+    "$pkgdir/usr/share/plasma/plasmoids/org.plasmakeepawake.widget/metadata.json"
+  cp -r "$startdir/../widget/contents" \
+    "$pkgdir/usr/share/plasma/plasmoids/org.plasmakeepawake.widget/contents"
+
+  install -Dm644 "$startdir/../LICENSE" \
+    "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

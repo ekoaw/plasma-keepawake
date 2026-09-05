@@ -109,40 +109,45 @@ plugin ABI.
 
 ## Status
 
-The daemon (`daemon/`) is real and self-testable:
+All 8 planned milestones are done, and it's actually running on this
+machine, not just built:
+
+- `plasma-keepawaked` is installed (`packaging/PKGBUILD`), running as a
+  `systemd --user` service (`systemctl status plasma-keepawaked`), reading
+  `~/.config/plasma-keepawake/config.json`, holding a genuine
+  `systemd-logind` sleep inhibitor (`systemd-inhibit --list`) whenever an
+  enabled rule is true, and serving `org.plasmakeepawake.Daemon1` on the
+  session bus.
+- The Claude Code hooks (`PreToolUse`/`Stop`, touching the signal file) are
+  installed in `~/.claude/settings.json`.
+- The widget is installed and added to the real panel — status icon, rule
+  list with toggles, add/edit/remove rules, reload button, all reading and
+  writing the daemon's live state (see "Architecture" for why it shells
+  out to `busctl --json=short` rather than using a D-Bus-from-QML binding
+  — there isn't one in Plasma 6 for a pure-QML plasmoid).
+
+For development, both pieces are testable in isolation without touching
+your real panel or a real config:
 
 ```sh
 cd daemon
 cargo run -- --check --config examples/config.json   # one-shot: print each rule's value
-cargo run -- --run   --config examples/config.json   # persistent: holds/releases the real
-                                                       # sleep inhibitor, serves D-Bus
-```
+cargo run -- --run   --config examples/config.json   # persistent, own D-Bus service + inhibitor
 
-While `--run` is active it holds a genuine `systemd-logind` sleep inhibitor
-(shows up in `systemd-inhibit --list`) whenever an enabled rule is true, and
-serves `org.plasmakeepawake.Daemon1` on the session bus — `busctl --user
-introspect org.plasmakeepawake.Daemon1 /org/plasmakeepawake/Daemon1` to
-poke at it directly. Editing the config file on disk hot-reloads it.
-
-The Claude Code hooks (`PreToolUse`/`Stop`, touching the signal file) are
-installed in this machine's own `~/.claude/settings.json` and verified
-against a running daemon.
-
-The widget (`widget/`) is a plain QML KPackage plasmoid — status icon,
-rule list with enable/disable toggles, add/edit/remove rules, reload
-button — talking to the daemon purely by shelling out to `busctl
---json=short` (there's no generic D-Bus-from-QML binding in Plasma 6; see
-PLAN.md). Try it in an isolated preview window without touching your real
-panel:
-
-```sh
 sudo pacman -S --needed plasma-sdk   # provides plasmoidviewer, one-time
-plasmoidviewer -a widget -f planar -s 420x450
+plasmoidviewer -a ../widget -f planar -s 420x450   # isolated preview window
 ```
 
-Not yet built: packaging/install (a systemd unit exists in `packaging/`
-but isn't installed anywhere by default, and the widget isn't on your real
-panel — both deliberately held back as separate steps). See
-[`PLAN.md`](PLAN.md) for the full milestone list, open decisions, and a
+The real find of this build-out: a production bug in the config
+hot-reload path caused unbounded CPU growth after any rule edit (reload
+reading the file generated its own filesystem event, which triggered
+another reload, forever) — caught only once the daemon was actually
+deployed and edited for real, not during any earlier scripted test. Fixed
+and verified against the live service. See [`PLAN.md`](PLAN.md) for that
+story in full, the rest of the milestone history, open decisions, and a
 known limitation around an unclean Claude Code exit leaving the signal
 flag stuck.
+
+## License
+
+GPL-3.0-or-later — see [`LICENSE`](LICENSE).

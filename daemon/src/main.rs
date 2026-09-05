@@ -123,7 +123,17 @@ fn run_daemon(config_path: PathBuf, config: Config) -> ExitCode {
 
 /// Watches the config file's parent directory (not the file itself — an
 /// editor's save-by-rename would otherwise orphan a direct file watch) and
-/// reloads on any event touching it.
+/// reloads on a create/modify/rename touching it.
+///
+/// Critically, this must *not* react to `Access` events: `reload()` itself
+/// opens and reads the config file, which generates an `Access(Open)`
+/// event on that same file — treating that as a trigger too creates an
+/// infinite reload loop (reload -> read -> access event -> reload -> ...),
+/// each iteration cheap but nonzero, which pegs a CPU core indefinitely.
+/// Caught live: after any `UpdateRule`/`AddRule`/`RemoveRule` call (whose
+/// `persist()` write also retriggers this once, harmlessly, since a write
+/// is a real content change unlike a read), CPU climbed from ~0% to 40%+
+/// within seconds on a real running daemon.
 fn watch_config(
     path: PathBuf,
     state: Arc<Mutex<DaemonState>>,
@@ -131,6 +141,9 @@ fn watch_config(
     let dir = path.parent()?.to_path_buf();
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         let Ok(event) = res else { return };
+        if !(event.kind.is_create() || event.kind.is_modify()) {
+            return;
+        }
         if event.paths.iter().any(|p| p == &path) {
             state.lock().unwrap().reload();
         }

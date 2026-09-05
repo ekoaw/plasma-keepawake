@@ -185,28 +185,54 @@ queries and serving `Daemon1`, so there was never a point where an async
 runtime paid for itself. `process_running` ended up as a ~30-line manual
 `/proc` scan; `sysinfo` wasn't needed.
 
-## Claude Code integration (concrete)
+## Claude Code integration (milestone 5, done)
 
 A `signal()` provider watches
 `$XDG_STATE_HOME/plasma-keepawake/signals/` (falls back to
 `~/.local/state/...`) for file presence = true. Claude Code hooks in
-`~/.claude/settings.json` become the producer, no daemon changes needed:
+`~/.claude/settings.json` are the producer, no daemon changes needed. Note
+`~` doesn't expand inside a hook `command` string — `$HOME` does, since
+hook commands run through a shell:
 
 ```json
 {
   "hooks": {
-    "PreToolUse": [{ "hooks": [{ "type": "command",
-      "command": "touch ~/.local/state/plasma-keepawake/signals/claude-thinking" }] }],
-    "Stop": [{ "hooks": [{ "type": "command",
-      "command": "rm -f ~/.local/state/plasma-keepawake/signals/claude-thinking" }] }]
+    "PreToolUse": [
+      { "hooks": [{ "type": "command",
+        "command": "mkdir -p $HOME/.local/state/plasma-keepawake/signals && touch $HOME/.local/state/plasma-keepawake/signals/claude-thinking" }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command",
+        "command": "rm -f $HOME/.local/state/plasma-keepawake/signals/claude-thinking" }] }
+    ]
   }
 }
 ```
 
-(Exact hook event names/payload to double check against the current Claude
-Code hooks reference when this is actually wired up — the mechanism is
-`signal()` + any command touching a file, so it also works for other tools
-by adding more hook lines, not more daemon code.)
+Installed in this machine's real `~/.claude/settings.json` and verified
+end to end: with `--run` active, manually running the exact `PreToolUse`
+command flipped `Inhibiting` to `true` with reason including
+`claude-code-active` and made `plasma-keepawaked` show up in
+`systemd-inhibit --list`; running the `Stop` command cleared it (`Reason`
+correctly fell back to whatever else was still true — cliamp was actually
+playing during this test, which is a nice bonus confirmation that rule
+stayed correct too).
+
+`Stop` fires once per full turn (not per individual tool call), so the
+flag stays set across a whole multi-tool-call turn rather than flickering
+between calls — the right granularity for "keep the machine awake while
+Claude is working on this turn."
+
+**Known limitation, accepted for now:** if a Claude Code session dies
+uncleanly between `PreToolUse` and `Stop` (crash, kill -9, ...) the flag
+file is never removed, and `plasma-keepawaked` would treat Claude as
+perpetually active — the fix if this turns out to matter in practice is a
+`SessionStart` hook that clears the flag (a new session starting means any
+previous session's turn is certainly over), not implemented yet since it's
+an extra hook to verify and this hasn't been observed as a real problem.
+The flag file's path is stable and safe to delete by hand
+(`rm -f ~/.local/state/plasma-keepawake/signals/claude-thinking`) if it's
+ever suspected of sticking.
 
 ## Widget (plasmoid) — planned scope for v1
 
@@ -243,9 +269,10 @@ by adding more hook lines, not more daemon code.)
    service` written; **not yet installed/enabled** on this machine — that's
    a separate, deliberate step (see note below), not implied by writing the
    unit file.
-5. **Claude Code hook wiring** — add the hook config, confirm the
-   `claude-code-active` rule actually tracks Claude Code activity in
-   practice.
+5. ✅ **Claude Code hook wiring** — added to this machine's real
+   `~/.claude/settings.json` (`PreToolUse`/`Stop`), verified end to end
+   against a running daemon. See "Claude Code integration" above, including
+   the accepted crash/stuck-flag limitation.
 6. **Plasma widget v1** — status + toggle, read-only expr display.
 7. **Widget rule editing** — `AddRule`/`UpdateRule`/`RemoveRule` on the
    daemon, text-field editor in the widget.

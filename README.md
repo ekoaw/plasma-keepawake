@@ -109,5 +109,22 @@ plugin ABI.
 
 ## Status
 
-Early design stage — see [`PLAN.md`](PLAN.md) for the implementation
-roadmap and open decisions. Nothing runnable yet.
+The daemon (`daemon/`) is real and self-testable:
+
+```sh
+cd daemon
+cargo run -- --check --config examples/config.json   # one-shot: print each rule's value
+cargo run -- --run   --config examples/config.json   # persistent: holds/releases the real
+                                                       # sleep inhibitor, serves D-Bus
+```
+
+While `--run` is active it holds a genuine `systemd-logind` sleep inhibitor
+(shows up in `systemd-inhibit --list`) whenever an enabled rule is true, and
+serves `org.plasmakeepawake.Daemon1` on the session bus — `busctl --user
+introspect org.plasmakeepawake.Daemon1 /org/plasmakeepawake/Daemon1` to
+poke at it directly. Editing the config file on disk hot-reloads it.
+
+Not yet built: the Claude Code hook wiring, the Plasma widget, and
+packaging/install (a systemd unit exists in `packaging/` but isn't
+installed anywhere by default). See [`PLAN.md`](PLAN.md) for the full
+milestone list and open decisions.

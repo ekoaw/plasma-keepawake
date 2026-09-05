@@ -34,6 +34,7 @@
 plasma-keepawake/
   daemon/            # Rust crate: plasma-keepawaked
   widget/             # QML plasmoid (KPackage layout for KF6)
+  packaging/          # systemd unit, eventually a PKGBUILD
   README.md
   PLAN.md
 ```
@@ -149,24 +150,40 @@ just laptops.
   and reports whether a transition happened, so the caller only logs on
   change. Reason string is the comma-joined names of currently-true enabled
   rules.
-- `service.rs` (pending, Milestone 4) — the daemon's own D-Bus interface,
-  `org.plasmakeepawake.Daemon1`:
-  - property: per-rule `{name, enabled, currently_true, last_error}`
-  - property: whether an inhibition is currently held, and why
-  - methods: `SetRuleEnabled(name, bool)`, `ReloadConfig()`, and later
-    `AddRule` / `UpdateRule` / `RemoveRule`
-- `main.rs` — `--check` (one-shot, print each rule's value) and `--run`
-  (poll every 2s, reconcile the inhibitor, log on transition; no D-Bus
-  service or config hot-reload yet). Grows into the persistent
-  providers → engine → inhibitor → service loop in Milestone 4.
+- `state.rs` — `DaemonState { config_path, rule_engine, inhibiting, reason,
+  reload_error }`, the one thing behind the shared lock. `reload()` rebuilds
+  `rule_engine` from disk wholesale and only touches `reload_error` on
+  failure — the last known-good `rule_engine` is left in place, per the
+  config-schema section above.
+- `service.rs` — the daemon's own D-Bus interface,
+  `org.plasmakeepawake.Daemon1` at `/org/plasmakeepawake/Daemon1`, wrapping
+  `Arc<Mutex<DaemonState>>`:
+  - property `Rules: a(sbbs)` — `(name, enabled, currently_true,
+    last_error)` per rule, last_error `""` when clean.
+  - properties `Inhibiting: b`, `Reason: s`, `ReloadError: s`.
+  - methods `SetRuleEnabled(name: s, enabled: b) -> b` (false if no such
+    rule) and `ReloadConfig()`. `AddRule`/`UpdateRule`/`RemoveRule` are
+    still just planned, for when the widget needs to write rules rather
+    than only toggle/reload them.
+- `main.rs` — `--check` (one-shot) and `--run`: builds `DaemonState`,
+  starts the D-Bus service, watches the config file's parent directory
+  with `notify` and reloads on any event touching the exact path (watching
+  the directory rather than the file survives an editor's save-by-rename,
+  which would silently orphan a direct file watch), then polls every 2s to
+  re-evaluate, update `inhibiting`/`reason`, and reconcile the logind
+  inhibitor. The D-Bus dispatch thread and the poll loop only ever touch
+  shared state through the one `Mutex<DaemonState>` lock, held briefly
+  (never across a D-Bus/proc/fs provider call or the blocking `Inhibit()`
+  call itself).
 
 Crates in use: `zbus` (blocking API — no async runtime needed for
-on-demand queries), `rhai`, `serde`/`serde_json`. Not yet added: `notify`
-(inotify, for hot-reload and live signal-file watching) and `tokio` (only
-needed once the daemon has a persistent event loop to run) — both deferred
-to Milestone 4 rather than added ahead of the code that needs them.
-`process_running` ended up as a ~30-line manual `/proc` scan; `sysinfo`
-wasn't needed.
+on-demand queries or for serving the interface), `rhai` (with the `sync`
+feature enabled so `Engine`/`AST` are `Send + Sync` and can live behind
+`Arc<Mutex<DaemonState>>`), `serde`/`serde_json`, `notify` (inotify, config
+hot-reload). No `tokio` — the blocking zbus APIs cover both the client
+queries and serving `Daemon1`, so there was never a point where an async
+runtime paid for itself. `process_running` ended up as a ~30-line manual
+`/proc` scan; `sysinfo` wasn't needed.
 
 ## Claude Code integration (concrete)
 
@@ -218,8 +235,14 @@ by adding more hook lines, not more daemon code.)
    `PolicyAgent.AddInhibition` (see "Inhibition mechanism" above for why),
    wired into a `--run` poll loop, verified against `systemd-inhibit --list`
    showing `plasma-keepawaked` appear/disappear in step with a test rule.
-4. **Daemon D-Bus service + systemd unit** — `org.plasmakeepawake.Daemon1`,
-   `plasma-keepawaked.service` (`systemctl --user enable --now`).
+4. ✅ **Daemon D-Bus service + systemd unit** — `org.plasmakeepawake.Daemon1`
+   live and verified via `busctl` (introspection, `Rules`/`Inhibiting`
+   properties, `SetRuleEnabled` overriding a true rule back to
+   not-inhibiting, hot-reload on file edit, last-good-config-kept +
+   `ReloadError` surfaced on invalid JSON). `packaging/plasma-keepawaked.
+   service` written; **not yet installed/enabled** on this machine — that's
+   a separate, deliberate step (see note below), not implied by writing the
+   unit file.
 5. **Claude Code hook wiring** — add the hook config, confirm the
    `claude-code-active` rule actually tracks Claude Code activity in
    practice.
@@ -229,6 +252,13 @@ by adding more hook lines, not more daemon code.)
 8. **Packaging** — `PKGBUILD` for the daemon binary + systemd unit,
    `kpackagetool6`-installable plasmoid, decide license (open decision
    below).
+
+Note on the unit file: writing `packaging/plasma-keepawaked.service` is
+just putting the file in the repo. `systemctl --user enable --now` makes
+the daemon start on every future login and starts it immediately on this
+machine — a persistent, visible change to the session — so that's held
+back as a separate step until it's actually wanted, not bundled into
+"wrote the packaging file."
 
 ## Open decisions
 

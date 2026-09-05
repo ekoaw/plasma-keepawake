@@ -3,21 +3,21 @@ use rhai::{Engine, AST};
 use crate::config::Config;
 use crate::providers;
 
-pub struct CompiledRule {
+pub struct Rule {
     pub name: String,
     pub enabled: bool,
     ast: Result<AST, String>,
-}
-
-pub struct RuleStatus {
-    pub name: String,
-    pub enabled: bool,
+    /// Last value from `evaluate_all`. Kept even for disabled rules so a
+    /// future UI can show "this would be true but you disabled it."
     pub value: Result<bool, String>,
 }
 
+/// Compiled rules plus their live `enabled`/`value` state, sharable behind
+/// a `Mutex` (rhai's `sync` feature makes `Engine`/`AST` `Send + Sync`) so
+/// both the poll loop and the D-Bus service can read/mutate it.
 pub struct RuleEngine {
     engine: Engine,
-    rules: Vec<CompiledRule>,
+    rules: Vec<Rule>,
 }
 
 impl RuleEngine {
@@ -28,49 +28,61 @@ impl RuleEngine {
         let rules = config
             .rules
             .iter()
-            .map(|rule| {
-                let ast = engine
+            .map(|rule| Rule {
+                name: rule.name.clone(),
+                enabled: rule.enabled,
+                ast: engine
                     .compile_expression(&rule.expr)
-                    .map_err(|e| e.to_string());
-                CompiledRule {
-                    name: rule.name.clone(),
-                    enabled: rule.enabled,
-                    ast,
-                }
+                    .map_err(|e| e.to_string()),
+                value: Err("not yet evaluated".to_string()),
             })
             .collect();
 
         RuleEngine { engine, rules }
     }
 
-    /// Evaluates every rule against the providers' current state. Cheap
-    /// enough to call on every provider-cache update once real providers
-    /// exist (Milestone 2) — no I/O happens here, only Rhai evaluation.
-    pub fn evaluate(&self) -> Vec<RuleStatus> {
+    /// Re-evaluates every rule's `expr` against the providers' current
+    /// state, regardless of `enabled`. Cheap (no I/O; providers do their
+    /// own D-Bus/proc/fs queries synchronously inside the Rhai call).
+    pub fn evaluate_all(&mut self) {
+        for rule in &mut self.rules {
+            rule.value = match &rule.ast {
+                Ok(ast) => self
+                    .engine
+                    .eval_ast::<bool>(ast)
+                    .map_err(|e| e.to_string()),
+                Err(e) => Err(e.clone()),
+            };
+        }
+    }
+
+    pub fn rules(&self) -> &[Rule] {
+        &self.rules
+    }
+
+    /// True while any *enabled* rule's last-evaluated value is `Ok(true)`.
+    pub fn should_inhibit(&self) -> bool {
         self.rules
             .iter()
-            .map(|rule| {
-                let value = match &rule.ast {
-                    Ok(ast) => self
-                        .engine
-                        .eval_ast::<bool>(ast)
-                        .map_err(|e| e.to_string()),
-                    Err(e) => Err(e.clone()),
-                };
-                RuleStatus {
-                    name: rule.name.clone(),
-                    enabled: rule.enabled,
-                    value,
-                }
-            })
+            .any(|r| r.enabled && matches!(r.value, Ok(true)))
+    }
+
+    pub fn active_rule_names(&self) -> Vec<&str> {
+        self.rules
+            .iter()
+            .filter(|r| r.enabled && matches!(r.value, Ok(true)))
+            .map(|r| r.name.as_str())
             .collect()
     }
-}
 
-/// True while any *enabled* rule evaluates to `true`. A rule with a compile
-/// or eval error is treated as false rather than crashing the daemon.
-pub fn should_inhibit(statuses: &[RuleStatus]) -> bool {
-    statuses
-        .iter()
-        .any(|s| s.enabled && matches!(s.value, Ok(true)))
+    /// Returns `true` if a rule named `name` was found and updated.
+    pub fn set_enabled(&mut self, name: &str, enabled: bool) -> bool {
+        match self.rules.iter_mut().find(|r| r.name == name) {
+            Some(r) => {
+                r.enabled = enabled;
+                true
+            }
+            None => false,
+        }
+    }
 }

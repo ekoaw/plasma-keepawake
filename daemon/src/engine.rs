@@ -6,6 +6,7 @@ use crate::providers;
 pub struct Rule {
     pub name: String,
     pub enabled: bool,
+    pub expr: String,
     ast: Result<AST, String>,
     /// Last value from `evaluate_all`. Kept even for disabled rules so a
     /// future UI can show "this would be true but you disabled it."
@@ -31,6 +32,7 @@ impl RuleEngine {
             .map(|rule| Rule {
                 name: rule.name.clone(),
                 enabled: rule.enabled,
+                expr: rule.expr.clone(),
                 ast: engine
                     .compile_expression(&rule.expr)
                     .map_err(|e| e.to_string()),
@@ -84,5 +86,15 @@ impl RuleEngine {
             }
             None => false,
         }
+    }
+
+    /// Compiles `expr` against this engine's registered provider functions
+    /// without adding it as a rule - used to validate a candidate `expr`
+    /// (from `AddRule`/`UpdateRule`) before it's persisted to disk.
+    pub fn validate_expr(&self, expr: &str) -> Result<(), String> {
+        self.engine
+            .compile_expression(expr)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
     }
 }

@@ -55,7 +55,7 @@ fn main() -> ExitCode {
     }
 
     if run {
-        return run_daemon(path, &config);
+        return run_daemon(path, config);
     }
 
     eprintln!("usage: plasma-keepawaked [--config PATH] (--check | --run)");
@@ -67,7 +67,7 @@ fn main() -> ExitCode {
 /// on file change, and holds/releases the logind sleep inhibitor on a
 /// fixed poll interval (still polling, not fully event-driven — see
 /// PLAN.md on why that's deferred rather than built speculatively).
-fn run_daemon(config_path: PathBuf, config: &Config) -> ExitCode {
+fn run_daemon(config_path: PathBuf, config: Config) -> ExitCode {
     let state = Arc::new(Mutex::new(DaemonState::new(config_path.clone(), config)));
 
     let iface = service::DaemonIface {

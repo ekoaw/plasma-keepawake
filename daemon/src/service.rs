@@ -11,10 +11,11 @@ pub struct DaemonIface {
 
 #[zbus::interface(name = "org.plasmakeepawake.Daemon1")]
 impl DaemonIface {
-    /// `(name, enabled, currently_true, last_error)` per rule; error is ""
-    /// when the rule last evaluated cleanly.
+    /// `(name, enabled, currently_true, last_error, expr)` per rule; error
+    /// is "" when the rule last evaluated cleanly. `expr` is included so a
+    /// UI can pre-fill an edit field with the current expression.
     #[zbus(property)]
-    fn rules(&self) -> Vec<(String, bool, bool, String)> {
+    fn rules(&self) -> Vec<(String, bool, bool, String, String)> {
         let state = self.state.lock().unwrap();
         state
             .rule_engine
@@ -25,7 +26,7 @@ impl DaemonIface {
                     Ok(v) => (*v, String::new()),
                     Err(e) => (false, e.clone()),
                 };
-                (r.name.clone(), r.enabled, value, err)
+                (r.name.clone(), r.enabled, value, err, r.expr.clone())
             })
             .collect()
     }
@@ -65,5 +66,42 @@ impl DaemonIface {
     /// dropped connection.
     fn reload_config(&self) {
         self.state.lock().unwrap().reload();
+    }
+
+    /// Adds a new rule and persists it to the config file. `(success,
+    /// error)` - error is "" on success, e.g. "a rule named ... already
+    /// exists" or a Rhai compile error otherwise.
+    fn add_rule(&self, name: &str, expr: &str, enabled: bool) -> (bool, String) {
+        match self
+            .state
+            .lock()
+            .unwrap()
+            .add_rule(name.to_string(), expr.to_string(), enabled)
+        {
+            Ok(()) => (true, String::new()),
+            Err(e) => (false, e),
+        }
+    }
+
+    /// Changes an existing rule's `expr` and persists it. Does not touch
+    /// `enabled` - use `SetRuleEnabled` for that.
+    fn update_rule(&self, name: &str, expr: &str) -> (bool, String) {
+        match self
+            .state
+            .lock()
+            .unwrap()
+            .update_rule(name, expr.to_string())
+        {
+            Ok(()) => (true, String::new()),
+            Err(e) => (false, e),
+        }
+    }
+
+    /// Removes a rule and persists the removal. `(success, error)`.
+    fn remove_rule(&self, name: &str) -> (bool, String) {
+        match self.state.lock().unwrap().remove_rule(name) {
+            Ok(()) => (true, String::new()),
+            Err(e) => (false, e),
+        }
     }
 }

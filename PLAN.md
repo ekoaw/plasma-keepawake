@@ -284,10 +284,54 @@ position/focus isn't reliably scriptable here — switched to asking for
 direct visual confirmation instead rather than continuing to guess at
 capture coordinates.
 
-Not yet built: an actual rule *editor* in the widget (add/remove rules,
-edit `expr` text) — v1 is read + toggle + reload only, per the original
-plan's scope-down; `AddRule`/`UpdateRule`/`RemoveRule` on the daemon don't
-exist yet either (milestone 7).
+## Rule editing (milestone 7, done)
+
+`AddRule(name, expr, enabled) -> (success, error)`, `UpdateRule(name,
+expr) -> (success, error)`, and `RemoveRule(name) -> (success, error)` on
+`org.plasmakeepawake.Daemon1`. Each validates before doing anything else
+(`AddRule` rejects a duplicate name, `UpdateRule`/`RemoveRule` reject an
+unknown one, and both `AddRule`/`UpdateRule` reject an `expr` that doesn't
+compile via `RuleEngine::validate_expr` — reusing the same Rhai engine and
+registered provider functions rules are actually evaluated with, not a
+separate check that could drift) then, on success, mutate `config.rules`,
+rebuild `RuleEngine` from it, and persist to the config file atomically
+(write to a `.json.tmp` sibling, then rename) — all inside `state.rs`'s
+`commit()`/`persist()`, so the in-memory state and the on-disk file always
+change together.
+
+This is deliberately a **separate persistence path** from `SetRuleEnabled`
+(milestone 4), which stays a transient in-memory override that a reload
+resets — add/update/remove are meant to durably change the config, the
+enabled toggle is meant to be a quick "not right now" that doesn't require
+touching the file. Worth knowing when reading `state.rs`: `SetRuleEnabled`
+goes through `rule_engine.set_enabled` directly, the other three go through
+`DaemonState`'s own methods that also call `persist()`.
+
+Exposing `expr` required adding it to the `Rules` D-Bus property (now
+`a(sbbss)`, name/enabled/currently_true/last_error/expr) — the widget needs
+the current expression to pre-fill an edit field, and `engine::Rule` didn't
+retain the original source string before this (only the compiled `AST`).
+
+Widget side: an "Add rule" form (name + expr text fields), a pencil icon
+per rule that swaps that row for an inline expr `TextField` (Enter or a
+checkmark button to save, an X to cancel), and a trash icon per rule
+calling `RemoveRule` directly with no confirmation dialog — accepted for
+v1 since the config file is easy to hand-recover from, revisit if an
+accidental-delete complaint ever comes up. Each of these three calls
+carries its own `(success, error)` result back to the widget (unlike
+`SetRuleEnabled`/`ReloadConfig`, which only trigger a blind refresh) via a
+`pendingCallbacks` map in `main.qml` keyed by the exact command string,
+since the executable data engine identifies a completed source by the
+command that produced it — a failure (e.g. a bad expression, or a name
+that already exists) surfaces as a red banner in the popup instead of
+silently no-oping.
+
+Verified live end to end via `plasmoidviewer` + a disposable test daemon:
+"Add rule" created a new rule with the entered name/expression and it
+showed up correctly in `busctl`'s view of `Rules` *and* in the config file
+on disk; editing an existing rule's expression via the pencil icon updated
+both the same way. Both were cross-checked against `busctl`/`cat` after
+each step rather than trusting the widget's own display alone.
 
 ## Milestones
 
@@ -319,8 +363,9 @@ exist yet either (milestone 7).
 6. ✅ **Plasma widget v1** — status + toggle, read-only expr display. See
    "Widget (plasmoid)" above for how it talks to the daemon and the API
    corrections `plasmoidviewer` caught along the way.
-7. **Widget rule editing** — `AddRule`/`UpdateRule`/`RemoveRule` on the
-   daemon, text-field editor in the widget.
+7. ✅ **Widget rule editing** — `AddRule`/`UpdateRule`/`RemoveRule` on the
+   daemon plus an editor in the widget (Add rule form, inline expr editing,
+   remove button per rule). See "Rule editing" below.
 8. **Packaging** — `PKGBUILD` for the daemon binary + systemd unit,
    `kpackagetool6`-installable plasmoid, decide license (open decision
    below).

@@ -1,11 +1,11 @@
 # plasma-keepawake
 
-Rule-driven "keep the system awake" tool for KDE Plasma. Instead of a single
-manual caffeine toggle, you define rules — expressions over things like
-"is media playing," "is a process running," "is a custom signal set" — and a
-background daemon holds a real systemd-logind sleep inhibitor for as long
-as any enabled rule is true — the same mechanism `systemd-inhibit` and
-media players like cliamp itself use.
+Rule-driven "keep the system awake" tool for KDE Plasma, developed with the
+help of AI assistance. Instead of a single manual caffeine toggle, you define
+rules — expressions over things like "is media playing," "is a process
+running," "is a custom signal set" — and a background daemon holds a real
+systemd-logind sleep inhibitor for as long as any enabled rule is true — the
+same mechanism `systemd-inhibit` and media players like cliamp itself use.
 
 Motivating cases (the two it needs to handle on day one):
 

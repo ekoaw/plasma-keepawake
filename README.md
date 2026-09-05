@@ -50,6 +50,69 @@ Two components, two toolchains, one repo:
   toggles rules on/off, edits rule expressions. Talks to the daemon over
   D-Bus, holds no state of its own.
 
+## Installing
+
+**Dependencies:**
+- An Arch-based Linux distro (uses `pacman`/`makepkg`) running KDE Plasma 6.
+- Build-time only, not needed afterward: a Rust toolchain (`cargo`) and
+  `base-devel` (for `makepkg`).
+- Runtime: `systemd` and `plasma-workspace` — both pulled in automatically
+  as package dependencies.
+- Optional, for widget development only: `plasma-sdk` (provides
+  `plasmoidviewer`, an isolated preview window — see "Status" below).
+
+```sh
+git clone https://github.com/ekoaw/plasma-keepawake.git
+cd plasma-keepawake
+./packaging/install.sh
+```
+
+This builds the package, installs it (`sudo pacman -U`, will prompt for
+your password), writes a default config to
+`~/.config/plasma-keepawake/config.json` **only if one doesn't already
+exist** (never overwrites your rules), and enables + (re)starts the
+`plasma-keepawaked` service. It then asks — doesn't assume — whether to
+restart `plasmashell` so the widget shows up in the widget picker, since
+that's a visible flicker across your whole desktop. Safe to re-run later
+(e.g. after pulling an update): it rebuilds, reinstalls, and restarts the
+daemon so a fix actually takes effect, still without touching your config.
+
+Then: right-click your panel → **Add Widgets…** → search "Plasma
+Keepawake" → drag it onto the panel.
+
+**Claude Code integration** is a separate, optional manual step (it edits
+`~/.claude/settings.json`, outside anything the package touches) — see
+"Claude Code integration" in [`PLAN.md`](PLAN.md) for the exact hook
+config.
+
+<details>
+<summary>Manual install (if you'd rather not run a script)</summary>
+
+```sh
+cd packaging
+makepkg --nosign
+sudo pacman -U plasma-keepawake-*.pkg.tar.zst
+
+mkdir -p ~/.config/plasma-keepawake
+cp ../daemon/examples/config.json ~/.config/plasma-keepawake/config.json   # or write your own
+
+systemctl --user daemon-reload
+systemctl --user enable --now plasma-keepawaked.service
+```
+
+Then add the widget as above; if it doesn't show up, `systemctl --user
+restart plasma-plasmashell.service`.
+</details>
+
+**Uninstalling:**
+```sh
+systemctl --user disable --now plasma-keepawaked.service
+sudo pacman -R plasma-keepawake
+```
+`pacman -R` doesn't touch `~/.config/plasma-keepawake/` or
+`~/.local/state/plasma-keepawake/` — remove those by hand if you want your
+config/signal files gone too.
+
 ## Rule model
 
 A rule is a name plus a boolean expression written in
@@ -109,22 +172,15 @@ plugin ABI.
 
 ## Status
 
-All 8 planned milestones are done, and it's actually running on this
-machine, not just built:
-
-- `plasma-keepawaked` is installed (`packaging/PKGBUILD`), running as a
-  `systemd --user` service (`systemctl status plasma-keepawaked`), reading
-  `~/.config/plasma-keepawake/config.json`, holding a genuine
-  `systemd-logind` sleep inhibitor (`systemd-inhibit --list`) whenever an
-  enabled rule is true, and serving `org.plasmakeepawake.Daemon1` on the
-  session bus.
-- The Claude Code hooks (`PreToolUse`/`Stop`, touching the signal file) are
-  installed in `~/.claude/settings.json`.
-- The widget is installed and added to the real panel — status icon, rule
-  list with toggles, add/edit/remove rules, reload button, all reading and
-  writing the daemon's live state (see "Architecture" for why it shells
-  out to `busctl --json=short` rather than using a D-Bus-from-QML binding
-  — there isn't one in Plasma 6 for a pure-QML plasmoid).
+All 8 planned milestones are done, and it's actually installed and
+running on this machine per the steps above, not just built — daemon
+active as a service holding a real inhibitor, widget on the real panel,
+Claude Code hooks wired in, all verified against live state rather than
+assumed. The widget itself is a status icon + rule list with toggles,
+add/edit/remove rules, and a reload button, all reading and writing the
+daemon's live state (see "Architecture" above for why it shells out to
+`busctl --json=short` rather than using a D-Bus-from-QML binding — there
+isn't one in Plasma 6 for a pure-QML plasmoid).
 
 For development, both pieces are testable in isolation without touching
 your real panel or a real config:

@@ -446,6 +446,23 @@ verification confirmed *correctness* of hot-reload but never checked its
    (not just written), including a real production bug found and fixed
    along the way. See "Packaging and the notify feedback-loop bug" below.
 
+## Post-milestone: install script
+
+`packaging/install.sh` wraps the manual install sequence documented above
+into one command (`makepkg` → `pacman -U` → default config if none exists
+→ enable + restart the service → ask, not assume, about restarting
+`plasmashell`). Added after the fact once the manual sequence had already
+been run by hand enough times during milestone 8 to be worth automating.
+Idempotent by design: re-running it after a code change rebuilds,
+reinstalls, and restarts the daemon (`restart`, not `enable --now`, since
+the latter wouldn't pick up a new binary on an already-running service —
+exactly the mistake that would've mattered most right after the CPU-loop
+fix), while never touching an existing config. Tested for real against
+this machine's already-installed, already-customized setup: config (which
+by this point had rules the user added through the widget, different from
+the seeded example) came through untouched, and the daemon restarted
+clean.
+
 ## Open decisions
 
 - ~~License — not chosen yet.~~ GPL-3.0-or-later (milestone 8) — `LICENSE`

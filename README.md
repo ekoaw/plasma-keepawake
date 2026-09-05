@@ -158,12 +158,19 @@ lock.
 | `mpris_playing(name)` | MPRIS (`org.mpris.MediaPlayer2.<name>`) | true iff `PlaybackStatus == Playing` |
 | `process_running(pattern)` | `/proc` scan | polled, no kernel event exists for arbitrary process start |
 | `on_battery()` / `on_ac()` | UPower (system bus) | queried on demand; `false`/AC assumed if UPower isn't running |
-| `signal(name)` | a flag file under `$XDG_STATE_HOME/plasma-keepawake/signals/<name>` | generic escape hatch — any script or hook can assert/clear a condition by touching/removing a file |
+| `signal(name)` | `$XDG_STATE_HOME/plasma-keepawake/signals/<name>` (a flag file) **or** `signals/<name>.d/` (a directory) | true if the flag file exists, or the `.d` directory has ≥1 file in it — see below |
 
-`signal()` is how Claude Code integration works: a Claude Code hook (e.g.
-`PreToolUse` touches the file, `Stop` removes it) is just one producer of a
-signal, with no Claude-specific code in the daemon. See `PLAN.md` for the
-concrete hook config.
+`signal()` is how Claude Code integration works, and it's why there are
+two forms. A single flag file is enough for one producer (any script or
+hook can assert/clear a condition by touching/removing a file). But two
+*concurrent* Claude Code sessions sharing one file is a real bug: whichever
+session finishes first removes the shared file, even if another session is
+still working. The `.d` directory form fixes that — each producer instance
+writes its own uniquely-named file (Claude Code's hooks use the session's
+`session_id`, delivered on the hook's stdin as JSON, not an env var) and
+removes only that one; the signal stays true as long as *any* file remains
+in the directory. See `PLAN.md`'s "Claude Code integration" section for
+the concrete hook config (needs `jq`) and how this was verified.
 
 New primitives (e.g. "is a given window focused") are added as new Rust
 functions registered with the Rhai engine — not a plugin/loadable-module

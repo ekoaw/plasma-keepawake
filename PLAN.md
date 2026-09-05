@@ -185,54 +185,80 @@ queries and serving `Daemon1`, so there was never a point where an async
 runtime paid for itself. `process_running` ended up as a ~30-line manual
 `/proc` scan; `sysinfo` wasn't needed.
 
-## Claude Code integration (milestone 5, done)
+## Claude Code integration (milestone 5, done; revised post-milestone-8 for concurrent sessions)
 
-A `signal()` provider watches
-`$XDG_STATE_HOME/plasma-keepawake/signals/` (falls back to
-`~/.local/state/...`) for file presence = true. Claude Code hooks in
-`~/.claude/settings.json` are the producer, no daemon changes needed. Note
-`~` doesn't expand inside a hook `command` string — `$HOME` does, since
-hook commands run through a shell:
+A `signal()` provider watches `$XDG_STATE_HOME/plasma-keepawake/signals/`
+(falls back to `~/.local/state/...`). Claude Code hooks in
+`~/.claude/settings.json` are the producer, no daemon changes needed for
+the basic mechanism. Note `~` doesn't expand inside a hook `command`
+string — `$HOME` does, since hook commands run through a shell.
+
+**Original design (milestone 5) used one shared flag file**
+(`signals/claude-thinking`, `PreToolUse` touches it, `Stop` removes it).
+That has a real bug with more than one concurrent Claude Code session:
+whichever session's `Stop` fires first removes the *shared* flag, even if
+another session is still actively working — `claude-code-active` goes
+false mid-turn for the session that's still busy, because the flag can't
+tell sessions apart. Caught by inspection (asked "what if two Claude Code
+instances run at once"), not by observing it happen.
+
+**Fix: per-session flags, a `.d` directory instead of one file.** Each
+`PreToolUse` writes its own file, named by the session's `session_id`
+(hook commands get this via JSON on **stdin**, not an environment
+variable — confirmed against the hooks reference; there's no
+`$CLAUDE_SESSION_ID`-style var). `signal(name)`'s implementation
+(`daemon/src/providers/signal.rs`) now checks *two* things: a plain file
+at `signals/<name>` (the original single-flag form, still supported —
+e.g. for manual testing with a bare `touch`) **or** a `signals/<name>.d`
+directory containing at least one file (true iff *any* producer among
+several is currently asserting the condition). One session finishing only
+removes its own file; the flag stays true as long as any other session's
+file remains.
 
 ```json
 {
   "hooks": {
     "PreToolUse": [
       { "hooks": [{ "type": "command",
-        "command": "mkdir -p $HOME/.local/state/plasma-keepawake/signals && touch $HOME/.local/state/plasma-keepawake/signals/claude-thinking" }] }
+        "command": "mkdir -p \"$HOME/.local/state/plasma-keepawake/signals/claude-thinking.d\" && SID=$(jq -r '.session_id') && touch \"$HOME/.local/state/plasma-keepawake/signals/claude-thinking.d/$SID\"" }] }
     ],
     "Stop": [
       { "hooks": [{ "type": "command",
-        "command": "rm -f $HOME/.local/state/plasma-keepawake/signals/claude-thinking" }] }
+        "command": "SID=$(jq -r '.session_id') && rm -f \"$HOME/.local/state/plasma-keepawake/signals/claude-thinking.d/$SID\"" }] }
     ]
   }
 }
 ```
 
-Installed in this machine's real `~/.claude/settings.json` and verified
-end to end: with `--run` active, manually running the exact `PreToolUse`
-command flipped `Inhibiting` to `true` with reason including
-`claude-code-active` and made `plasma-keepawaked` show up in
-`systemd-inhibit --list`; running the `Stop` command cleared it (`Reason`
-correctly fell back to whatever else was still true — cliamp was actually
-playing during this test, which is a nice bonus confirmation that rule
-stayed correct too).
+Needs `jq` (present on this machine; worth a dependency note if this ever
+gets its own packaging beyond a manual hook config, since it's not pulled
+in by `packaging/PKGBUILD`).
 
-`Stop` fires once per full turn (not per individual tool call), so the
-flag stays set across a whole multi-tool-call turn rather than flickering
-between calls — the right granularity for "keep the machine awake while
-Claude is working on this turn."
+Verified two ways: (1) piping a synthetic `{"session_id":"AAA",...}` /
+`{"session_id":"BBB",...}` payload into the exact hook command strings for
+two fake concurrent sessions, confirming `Stop` for session A leaves
+session B's file (and thus the flag) intact, and only goes false once both
+are removed; (2) against the real installed daemon with the real hooks
+active for *this actual session* — `signals/claude-thinking.d/` contains a
+file named by this session's real `session_id`, and `Rules` correctly
+reports `claude-code-active: true`.
 
-**Known limitation, accepted for now:** if a Claude Code session dies
-uncleanly between `PreToolUse` and `Stop` (crash, kill -9, ...) the flag
-file is never removed, and `plasma-keepawaked` would treat Claude as
-perpetually active — the fix if this turns out to matter in practice is a
-`SessionStart` hook that clears the flag (a new session starting means any
-previous session's turn is certainly over), not implemented yet since it's
-an extra hook to verify and this hasn't been observed as a real problem.
-The flag file's path is stable and safe to delete by hand
-(`rm -f ~/.local/state/plasma-keepawake/signals/claude-thinking`) if it's
-ever suspected of sticking.
+`Stop` fires once per full turn (not per individual tool call), so a
+session's flag stays set across its whole multi-tool-call turn rather than
+flickering between calls — the right granularity for "keep the machine
+awake while Claude is working on this turn."
+
+**Known limitation, still accepted:** if a session dies uncleanly between
+`PreToolUse` and `Stop` (crash, `kill -9`, ...), *its own* file in
+`claude-thinking.d/` is never removed — no longer wipes out other
+sessions' flags (that part's fixed), but it does mean `claude-code-active`
+stays stuck true forever if that stale file is the last one left, even
+once every real session has ended. Same mitigation idea as before, scaled
+up: a `SessionStart` hook that clears out the whole `claude-thinking.d/`
+directory (a new session starting is still a reasonable signal that any
+previous turn is over) — still not implemented, still unverified against
+the hooks reference, still hasn't been observed as a real problem. Safe to
+clean up by hand: `rm -rf ~/.local/state/plasma-keepawake/signals/claude-thinking.d`.
 
 ## Widget (plasmoid) — milestone 6, done
 

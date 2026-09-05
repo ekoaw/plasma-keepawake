@@ -234,17 +234,60 @@ The flag file's path is stable and safe to delete by hand
 (`rm -f ~/.local/state/plasma-keepawake/signals/claude-thinking`) if it's
 ever suspected of sticking.
 
-## Widget (plasmoid) — planned scope for v1
+## Widget (plasmoid) — milestone 6, done
 
-- Panel/systray icon reflecting current state (awake-forced vs idle-allowed).
-- Popup: list of rules with enabled toggle and live true/false indicator
-  (read from the daemon's D-Bus properties — no local evaluation).
-- "Edit rule" — plain text field for `expr`, saved via the daemon's D-Bus
-  method (once that exists) rather than writing JSON directly. Until that
-  method exists, editing is done by hand in the config file and the widget
-  is read/toggle-only.
-- Built against KF6 (Plasma 6.7 here), KPackage layout, `kpackagetool6` for
-  local install during development.
+`widget/` is a plain KPackage plasmoid (`metadata.json` +
+`contents/ui/main.qml`), no C++/CMake build step. It talks to
+`org.plasmakeepawake.Daemon1` entirely by shelling out to `busctl
+--json=short` through `Plasma5Support.DataSource`'s `"executable"` engine
+(`GetAll` for status, individual calls for `SetRuleEnabled`/`ReloadConfig`)
+rather than any generic D-Bus-from-QML binding — **there isn't one** in
+Plasma 6 for a pure-QML plasmoid. This was confirmed, not assumed: even
+KDE Connect's own widget needs a compiled C++ QML plugin
+(`org.kde.kdeconnect`, see `DBusProperty.qml`) for its D-Bus access.
+`busctl --json=short` gives clean, directly-`JSON.parse`-able output and
+keeps this plasmoid pure QML.
+
+Compact representation is a `Kirigami.Icon` in the panel; full
+representation shows inhibiting/reason, a `ReloadError` banner if the last
+reload failed, and a checkbox + true/false indicator per rule, each toggle
+calling `SetRuleEnabled` directly (no local evaluation — everything shown
+is read from the daemon).
+
+Getting this running exposed a string of stale/wrong assumptions about the
+current Plasma 6 QML API, each caught immediately by `plasmoidviewer`
+(from `plasma-sdk`) printing the exact file:line of the failure rather than
+by guessing:
+- `IconItem` doesn't exist anywhere in this Plasma 6.7 install under
+  either `org.kde.plasma.core` or `org.kde.plasma.components` (a Plasma 5
+  holdover) — `Kirigami.Icon` is the current replacement.
+- `toolTipMainText`/`toolTipSubText` are properties of `PlasmoidItem`
+  itself (set directly on `root`), not of the `Plasmoid.` attached object —
+  confirmed by reading the actual `.qmltypes` file rather than guessing
+  again after the first attempt (`Plasmoid.toolTipMainText`) didn't error
+  but `Plasmoid.toolTipSubText` did, which would have been a confusing
+  inconsistency to paper over without checking.
+
+Verified live end to end via `plasmoidviewer`: real `Rules`/`Inhibiting`/
+`Reason` data rendered correctly (cross-checked against `busctl` output
+directly), a checkbox toggle correctly called `SetRuleEnabled` and changed
+the daemon's live state (confirmed via `busctl` immediately after), and
+`ReloadConfig` correctly reset that same override back to the config
+file's value — which is the designed behavior (reload replaces the rule
+engine wholesale, per the config-schema section above), not a bug, though
+it did initially look like one until the test sequencing was untangled.
+
+One process note from this session: automated screenshot capture
+(`spectacle -a`/`-f` + crop) twice grabbed the wrong window under this
+Wayland session (an unrelated browser tab, then a terminal) since window
+position/focus isn't reliably scriptable here — switched to asking for
+direct visual confirmation instead rather than continuing to guess at
+capture coordinates.
+
+Not yet built: an actual rule *editor* in the widget (add/remove rules,
+edit `expr` text) — v1 is read + toggle + reload only, per the original
+plan's scope-down; `AddRule`/`UpdateRule`/`RemoveRule` on the daemon don't
+exist yet either (milestone 7).
 
 ## Milestones
 
@@ -273,7 +316,9 @@ ever suspected of sticking.
    `~/.claude/settings.json` (`PreToolUse`/`Stop`), verified end to end
    against a running daemon. See "Claude Code integration" above, including
    the accepted crash/stuck-flag limitation.
-6. **Plasma widget v1** — status + toggle, read-only expr display.
+6. ✅ **Plasma widget v1** — status + toggle, read-only expr display. See
+   "Widget (plasmoid)" above for how it talks to the daemon and the API
+   corrections `plasmoidviewer` caught along the way.
 7. **Widget rule editing** — `AddRule`/`UpdateRule`/`RemoveRule` on the
    daemon, text-field editor in the widget.
 8. **Packaging** — `PKGBUILD` for the daemon binary + systemd unit,

@@ -126,8 +126,22 @@ poke at it directly. Editing the config file on disk hot-reloads it.
 
 The Claude Code hooks (`PreToolUse`/`Stop`, touching the signal file) are
 installed in this machine's own `~/.claude/settings.json` and verified
-against a running daemon. Not yet built: the Plasma widget, and
-packaging/install (a systemd unit exists in `packaging/` but isn't
-installed anywhere by default). See [`PLAN.md`](PLAN.md) for the full
-milestone list, open decisions, and a known limitation around an unclean
-Claude Code exit leaving the signal flag stuck.
+against a running daemon.
+
+The widget (`widget/`) is a plain QML KPackage plasmoid — status icon,
+rule list with enable/disable toggles, reload button — talking to the
+daemon purely by shelling out to `busctl --json=short` (there's no
+generic D-Bus-from-QML binding in Plasma 6; see PLAN.md). Try it in an
+isolated preview window without touching your real panel:
+
+```sh
+sudo pacman -S --needed plasma-sdk   # provides plasmoidviewer, one-time
+plasmoidviewer -a widget -f planar -s 400x350
+```
+
+Not yet built: an in-widget rule editor (add/remove rules, edit `expr`
+text — v1 is read + toggle + reload only) and packaging/install (a
+systemd unit exists in `packaging/` but isn't installed anywhere by
+default). See [`PLAN.md`](PLAN.md) for the full milestone list, open
+decisions, and a known limitation around an unclean Claude Code exit
+leaving the signal flag stuck.

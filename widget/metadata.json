@@ -1,0 +1,17 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "Eko Adi Wicaksono",
+                "Email": "eko.adi.wicaksono@gmail.com"
+            }
+        ],
+        "Category": "System Information",
+        "Description": "Status and controls for the plasma-keepawaked rule-driven sleep inhibitor",
+        "Icon": "preferences-system-power-management",
+        "Id": "org.plasmakeepawake.widget",
+        "Name": "Plasma Keepawake"
+    },
+    "X-Plasma-API-Minimum-Version": "6.0"
+}

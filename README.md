@@ -19,27 +19,27 @@ The rule model is intentionally general — those two are just the first two
 ## Architecture
 
 ```
-                 ┌─────────────────────────────┐
-                 │   plasma-keepawaked (Rust)   │
-                 │                              │
+                  ┌──────────────────────────────┐
+                  │   plasma-keepawaked (Rust)   │
+                  │                              │
   MPRIS ────────▶│  providers: mpris, process,  │──▶ org.freedesktop.
   UPower ───────▶│  battery, signal-file        │    login1.Manager
   /proc ────────▶│                              │    .Inhibit()
   signal dir ───▶│  rule engine: rhai exprs     │    (holds the returned
   (Claude Code    │  over provider functions     │     fd; drop to release)
    hooks, etc.)   │                              │
-                 │  own D-Bus service:          │
-                 │  org.plasmakeepawake.Daemon1 │◀── queried/controlled by
-                 └─────────────────────────────┘
-                              ▲
-                              │ D-Bus
-                              ▼
-                 ┌─────────────────────────────┐
-                 │  Plasma widget (QML plasmoid)│
-                 │  status icon + rule list +   │
-                 │  enable/disable + raw expr   │
-                 │  editor                      │
-                 └─────────────────────────────┘
+                  │  own D-Bus service:          │
+                  │  org.plasmakeepawake.Daemon1 │◀── queried/controlled by
+                  └──────────────────────────────┘
+                                 ▲
+                                 │ D-Bus
+                                 ▼
+                  ┌──────────────────────────────┐
+                  │  Plasma widget (QML plasmoid)│
+                  │  status icon + rule list +   │
+                  │  enable/disable + raw expr   │
+                  │  editor                      │
+                  └──────────────────────────────┘
 ```
 
 Two components, two toolchains, one repo:

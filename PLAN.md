@@ -8,10 +8,11 @@
   active (hook-driven signal file).
 - Daemon is the single source of truth and the single writer of its own
   config; the widget is a thin D-Bus client.
-- Inhibition goes through `org.kde.Solid.PowerManagement.PolicyAgent` (the
-  interface Plasma's own power settings page reads), not a bare
-  `systemd-inhibit` subprocess, so active inhibitions are visible/consistent
-  with the rest of the desktop.
+- Inhibition goes through `org.freedesktop.login1.Manager.Inhibit()`
+  (systemd-logind) — the same mechanism the `systemd-inhibit` CLI wraps, and
+  empirically confirmed to be what real apps on this machine actually use
+  (see "Inhibition mechanism" below for how that was confirmed and what it
+  replaced).
 
 ## Non-goals (for now)
 
@@ -37,25 +38,46 @@ plasma-keepawake/
   PLAN.md
 ```
 
-## Confirmed D-Bus surfaces (introspected on this machine, Plasma 6.7)
+## Inhibition mechanism (how milestone 3 landed here)
 
-`org.kde.Solid.PowerManagement.PolicyAgent`
-(`/org/kde/Solid/PowerManagement/PolicyAgent`):
+The original plan (above, and in the first cut of this doc) was to call
+`org.kde.Solid.PowerManagement.PolicyAgent.AddInhibition(types, app_name,
+reason) -> cookie`, on the theory that it's "the interface Plasma's own
+power settings page reads from." That theory didn't survive contact with
+the real system:
+
+- No `-dev` package on this machine ships the header defining the `types`
+  bitmask (`RequiredPolicies`), so the value to pass was already a guess.
+- Probing `AddInhibition` with candidate values (1, 2, 4, 8) via `busctl`
+  produced real cookies and `HasInhibition` returned `true`, but **none of
+  it showed up** in `RequestedInhibitions`/`ActiveInhibitions`, nor in
+  Plasma's battery/power applet popup — the one place a user could visually
+  confirm "yes, something is holding sleep off."
+- Ground truth came from `systemd-inhibit --list`, which showed cliamp's
+  *actual* inhibitor as a `systemd-inhibit`-wrapped subprocess — i.e. cliamp
+  itself uses systemd-logind's inhibitor mechanism, not PolicyAgent. That
+  also explains why `RequestedInhibitions`/the battery popup kept showing
+  cliamp's entry unchanged no matter what was probed on PolicyAgent: those
+  UI surfaces most likely just mirror logind's inhibitor list rather than
+  reflecting `AddInhibition` calls at all.
+
+Conclusion: `org.freedesktop.login1.Manager.Inhibit()` is the real,
+verified mechanism, confirmed two ways — it's what cliamp already uses, and
+after wiring it up (`daemon/src/inhibitor.rs`) `plasma-keepawaked` itself
+showed up correctly in `systemd-inhibit --list` (`WHO=plasma-keepawaked
+... WHAT=sleep ... MODE=block`) while a test rule was true, and disappeared
+the moment it went false. No PolicyAgent bitmask to guess, and no cookie
+bookkeeping either — `Inhibit()` returns a file descriptor; holding it open
+*is* the inhibition, dropping it releases the lock, and an unclean daemon
+exit can't leak an inhibitor since the kernel closes the fd when the
+process dies.
 
 ```
-AddInhibition(u types, s app_name, s reason) -> u cookie
-ReleaseInhibition(u cookie)
-HasInhibition(u types) -> b
-property ActiveInhibitions: a(ssssu)
+org.freedesktop.login1.Manager (system bus, /org/freedesktop/login1)
+  Inhibit(what: "sleep", who: s, why: s, mode: "block") -> h (fd)
 ```
 
-Open item: the exact bitmask values for `types` (`RequiredPolicies`, e.g.
-"interrupt session" vs "change screen settings") aren't in an installed
-header on this machine (no `-dev` package present) — confirm against KDE
-Frameworks Solid source before wiring `AddInhibition`, and verify
-empirically by checking that the screen doesn't blank / system doesn't
-suspend while an inhibition with the chosen value is active, and that it
-shows up in `ActiveInhibitions`.
+## Other confirmed D-Bus surfaces (introspected on this machine, Plasma 6.7)
 
 `org.mpris.MediaPlayer2.<player>` — standard MPRIS2: `PlaybackStatus`
 property on `org.mpris.MediaPlayer2.Player`, changes announced via
@@ -122,17 +144,21 @@ just laptops.
   each rule's `expr` to an `AST` once at construction, evaluates on demand.
   A per-rule compile or eval error is isolated to that rule (reported, not
   fatal) rather than failing the whole evaluation.
-- `inhibitor.rs` (pending, Milestone 3) — wraps `AddInhibition` /
-  `ReleaseInhibition`, holds the current cookie (if any), computes the
-  reason string from currently-true rule names.
+- `inhibitor.rs` — holds an `Option<OwnedFd>` from `login1.Manager.Inhibit`;
+  `reconcile(should_inhibit, reason)` acquires/releases on state transitions
+  and reports whether a transition happened, so the caller only logs on
+  change. Reason string is the comma-joined names of currently-true enabled
+  rules.
 - `service.rs` (pending, Milestone 4) — the daemon's own D-Bus interface,
   `org.plasmakeepawake.Daemon1`:
   - property: per-rule `{name, enabled, currently_true, last_error}`
   - property: whether an inhibition is currently held, and why
   - methods: `SetRuleEnabled(name, bool)`, `ReloadConfig()`, and later
     `AddRule` / `UpdateRule` / `RemoveRule`
-- `main.rs` — currently a synchronous `--check` CLI; grows a persistent
-  event loop in Milestone 4 wiring providers → engine → inhibitor → service.
+- `main.rs` — `--check` (one-shot, print each rule's value) and `--run`
+  (poll every 2s, reconcile the inhibitor, log on transition; no D-Bus
+  service or config hot-reload yet). Grows into the persistent
+  providers → engine → inhibitor → service loop in Milestone 4.
 
 Crates in use: `zbus` (blocking API — no async runtime needed for
 on-demand queries), `rhai`, `serde`/`serde_json`. Not yet added: `notify`
@@ -188,9 +214,10 @@ by adding more hook lines, not more daemon code.)
    part of the original plan is deferred to milestone 4. Verified live
    against this machine: real cliamp MPRIS playback state, real UPower
    `OnBattery`, a hand-created signal file, and `/proc` scanning.
-3. **Inhibition** — confirm `PolicyAgent` bitmask, wire `AddInhibition`/
-   `ReleaseInhibition` on rule-truth transitions, verify against System
-   Settings' power page and `ActiveInhibitions`.
+3. ✅ **Inhibition** — landed on `login1.Manager.Inhibit()` instead of
+   `PolicyAgent.AddInhibition` (see "Inhibition mechanism" above for why),
+   wired into a `--run` poll loop, verified against `systemd-inhibit --list`
+   showing `plasma-keepawaked` appear/disappear in step with a test rule.
 4. **Daemon D-Bus service + systemd unit** — `org.plasmakeepawake.Daemon1`,
    `plasma-keepawaked.service` (`systemctl --user enable --now`).
 5. **Claude Code hook wiring** — add the hook config, confirm the

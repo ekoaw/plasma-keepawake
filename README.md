@@ -3,8 +3,9 @@
 Rule-driven "keep the system awake" tool for KDE Plasma. Instead of a single
 manual caffeine toggle, you define rules — expressions over things like
 "is media playing," "is a process running," "is a custom signal set" — and a
-background daemon holds a proper Plasma power-management inhibition for as
-long as any enabled rule is true.
+background daemon holds a real systemd-logind sleep inhibitor for as long
+as any enabled rule is true — the same mechanism `systemd-inhibit` and
+media players like cliamp itself use.
 
 Motivating cases (the two it needs to handle on day one):
 
@@ -21,11 +22,11 @@ The rule model is intentionally general — those two are just the first two
                  ┌─────────────────────────────┐
                  │   plasma-keepawaked (Rust)   │
                  │                              │
-  MPRIS ────────▶│  providers: mpris, process,  │──▶ org.kde.Solid.
-  UPower ───────▶│  battery, signal-file        │    PowerManagement.
-  /proc ────────▶│                              │    PolicyAgent
-  signal dir ───▶│  rule engine: rhai exprs     │    (AddInhibition /
-  (Claude Code    │  over provider functions     │     ReleaseInhibition)
+  MPRIS ────────▶│  providers: mpris, process,  │──▶ org.freedesktop.
+  UPower ───────▶│  battery, signal-file        │    login1.Manager
+  /proc ────────▶│                              │    .Inhibit()
+  signal dir ───▶│  rule engine: rhai exprs     │    (holds the returned
+  (Claude Code    │  over provider functions     │     fd; drop to release)
    hooks, etc.)   │                              │
                  │  own D-Bus service:          │
                  │  org.plasmakeepawake.Daemon1 │◀── queried/controlled by
@@ -81,10 +82,11 @@ expressions combine them with normal `&&` / `||` / `!`.
 ```
 
 While any **enabled** rule evaluates `true`, the daemon holds one
-`AddInhibition` call against `org.kde.Solid.PowerManagement.PolicyAgent`
-(the interface KDE's own power settings page reads from), with a reason
-string listing which rule(s) are currently active. The moment none are true,
-it releases the inhibition.
+`org.freedesktop.login1.Manager.Inhibit()` lock (the same D-Bus call
+`systemd-inhibit` and cliamp itself use — confirmed by checking
+`systemd-inhibit --list`, see `PLAN.md`), with a reason string naming which
+rule(s) are currently active. The moment none are true, it releases the
+lock.
 
 ### Built-in provider functions (v1)
 

@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "name": "cliamp-playing",
+      "enabled": true,
+      "expr": "mpris_playing(\"cliamp\")"
+    },
+    {
+      "name": "claude-code-active",
+      "enabled": true,
+      "expr": "signal(\"claude-thinking\")"
+    },
+    {
+      "name": "media-but-not-on-battery",
+      "enabled": false,
+      "expr": "mpris_playing(\"cliamp\") && !on_battery()"
+    }
+  ]
+}

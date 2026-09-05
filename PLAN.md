@@ -64,8 +64,11 @@ and go (only exist while the app runs), so also watch
 `org.freedesktop.DBus.NameOwnerChanged` to notice start/stop rather than
 assuming the name is always ownable.
 
-`org.freedesktop.UPower` — `OnBattery` property on the main UPower object,
-`PropertiesChanged` signal for updates.
+`org.freedesktop.UPower` — **system bus** (not session bus, unlike MPRIS/
+PolicyAgent), object path `/org/freedesktop/UPower`, `OnBattery` property,
+`PropertiesChanged` signal for updates. Confirmed present and running on
+this machine (`upower.service`, active) even though it's a desktop, not
+just laptops.
 
 ## Config schema (v1)
 
@@ -87,30 +90,57 @@ assuming the name is always ownable.
   known-good config active, don't drop to "no rules," and surface the error
   (exposed via the daemon's status D-Bus property so the widget can show it).
 
-## Daemon crate layout (planned)
+## Daemon crate layout
 
-- `config.rs` — schema types (serde), load/validate/hot-reload via `notify`.
-- `providers/` — one module per primitive (`mpris.rs`, `process.rs`,
-  `power.rs`, `signal.rs`), each exposing a small async "current value"
-  cache kept up to date by D-Bus signals (mpris, power) or polling/inotify
-  (process, signal). Rule evaluation reads the cache, never blocks on I/O.
+- `config.rs` — schema types (serde), `Config::load`. Hot-reload via
+  `notify` is still pending (Milestone 4 territory, once there's a
+  persistent process for it to run inside).
+- `providers/` — implemented as **on-demand queries**, not the
+  event-driven caches originally sketched here: each function does its
+  D-Bus round-trip / `/proc` scan / file-existence check fresh on every
+  call, and any failure (service not running, no such property) degrades
+  to a safe default (`false` for playing/running/on_battery) instead of
+  propagating an error. This is correct and simple, and cheap enough for
+  `--check`; it's the wrong shape for a long-running daemon polling every
+  few seconds forever, so Milestone 4 replaces the *implementation* of
+  these same functions with signal/inotify-fed caches without changing
+  their names or the rule language.
+  - `dbus.rs` — shared `get_property::<T>(bus, dest, path, iface, prop)`
+    helper over `zbus::blocking`, one cached `Connection` per bus
+    (session/system), `None` on any failure.
+  - `mpris.rs` — `playing(name)`, session bus.
+  - `power.rs` — `on_battery()`, **system** bus (see above).
+  - `process.rs` — `running(pattern)`, `/proc/<pid>/cmdline` substring
+    match with a `comm` fallback for processes with empty cmdlines. Known
+    caveat: matches against *every* process's full command line, including
+    whatever invoked the check itself if the pattern happens to appear
+    there (bit us once while testing with an inline shell pattern — not a
+    bug, just how substring matching over cmdlines works).
+  - `signal.rs` — `is_set(name)`, plain file-existence check under the
+    signals dir; no inotify yet since on-demand queries don't need it.
 - `engine.rs` — Rhai `Engine`, registers one function per provider, compiles
-  each rule's `expr` to an `AST` once (recompile only on config reload),
-  evaluates on every provider-cache update.
-- `inhibitor.rs` — wraps `AddInhibition` / `ReleaseInhibition`, holds the
-  current cookie (if any), computes the reason string from currently-true
-  rule names.
-- `service.rs` — the daemon's own D-Bus interface, `org.plasmakeepawake.Daemon1`:
+  each rule's `expr` to an `AST` once at construction, evaluates on demand.
+  A per-rule compile or eval error is isolated to that rule (reported, not
+  fatal) rather than failing the whole evaluation.
+- `inhibitor.rs` (pending, Milestone 3) — wraps `AddInhibition` /
+  `ReleaseInhibition`, holds the current cookie (if any), computes the
+  reason string from currently-true rule names.
+- `service.rs` (pending, Milestone 4) — the daemon's own D-Bus interface,
+  `org.plasmakeepawake.Daemon1`:
   - property: per-rule `{name, enabled, currently_true, last_error}`
   - property: whether an inhibition is currently held, and why
   - methods: `SetRuleEnabled(name, bool)`, `ReloadConfig()`, and later
     `AddRule` / `UpdateRule` / `RemoveRule`
-- `main.rs` — tokio runtime, wires providers → engine → inhibitor → service.
+- `main.rs` — currently a synchronous `--check` CLI; grows a persistent
+  event loop in Milestone 4 wiring providers → engine → inhibitor → service.
 
-Crates: `zbus` (D-Bus, async), `rhai`, `serde`/`serde_json`, `notify`
-(inotify), `tokio`. `sysinfo` or raw `/proc` reads for `process_running` —
-decide during Phase 2 based on how much `sysinfo` pulls in versus a ~30-line
-manual `/proc/<pid>/comm` scan.
+Crates in use: `zbus` (blocking API — no async runtime needed for
+on-demand queries), `rhai`, `serde`/`serde_json`. Not yet added: `notify`
+(inotify, for hot-reload and live signal-file watching) and `tokio` (only
+needed once the daemon has a persistent event loop to run) — both deferred
+to Milestone 4 rather than added ahead of the code that needs them.
+`process_running` ended up as a ~30-line manual `/proc` scan; `sysinfo`
+wasn't needed.
 
 ## Claude Code integration (concrete)
 
@@ -149,12 +179,15 @@ by adding more hook lines, not more daemon code.)
 
 ## Milestones
 
-1. **Daemon skeleton** — config load/validate/hot-reload, Rhai engine with
-   stub provider functions returning fixed values, a `--check` CLI flag that
-   loads a config and prints each rule's current truth value. No D-Bus yet.
-   Gets the rule language right before touching the desktop integration.
-2. **Real providers** — mpris, UPower, process, signal-file, each with its
-   own D-Bus/inotify wiring and cache, still driven via `--check`/logs.
+1. ✅ **Daemon skeleton** — config load, Rhai engine with env-var-backed
+   stub providers, a `--check` CLI flag that loads a config and prints each
+   rule's current truth value. No D-Bus yet. Got the rule language right
+   before touching desktop integration.
+2. ✅ **Real providers** — mpris, UPower, process, signal-file, implemented
+   as on-demand queries (see crate layout above) rather than caches — that
+   part of the original plan is deferred to milestone 4. Verified live
+   against this machine: real cliamp MPRIS playback state, real UPower
+   `OnBattery`, a hand-created signal file, and `/proc` scanning.
 3. **Inhibition** — confirm `PolicyAgent` bitmask, wire `AddInhibition`/
    `ReleaseInhibition` on rule-truth transitions, verify against System
    Settings' power page and `ActiveInhibitions`.

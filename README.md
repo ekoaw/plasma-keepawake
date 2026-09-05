@@ -92,7 +92,7 @@ it releases the inhibition.
 |---|---|---|
 | `mpris_playing(name)` | MPRIS (`org.mpris.MediaPlayer2.<name>`) | true iff `PlaybackStatus == Playing` |
 | `process_running(pattern)` | `/proc` scan | polled, no kernel event exists for arbitrary process start |
-| `on_battery()` / `on_ac()` | UPower | event-driven |
+| `on_battery()` / `on_ac()` | UPower (system bus) | queried on demand; `false`/AC assumed if UPower isn't running |
 | `signal(name)` | a flag file under `$XDG_STATE_HOME/plasma-keepawake/signals/<name>` | generic escape hatch — any script or hook can assert/clear a condition by touching/removing a file |
 
 `signal()` is how Claude Code integration works: a Claude Code hook (e.g.

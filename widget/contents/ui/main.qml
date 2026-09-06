@@ -41,6 +41,18 @@ PlasmoidItem {
         : "plasma-keepawaked not running"
     toolTipSubText: daemonRunning ? reason : ""
 
+    // Breeze's "status/" context icons (system-suspend-inhibited/
+    // -uninhibited) look like the obvious fit, but breeze-dark's own
+    // index.theme marks that bucket "Icon(s) for ... System Tray. Not
+    // particularly used on Plasma. - DO_NOT_USE_ANYWHERE_ELSE" - and
+    // trying them rendered blank in this widget (confirmed in
+    // plasmoidviewer). Sticking to a normal, generically-reused action
+    // icon instead, recolored via isMask.
+    readonly property string statusIconSource: "system-suspend-symbolic"
+    readonly property color statusIconColor: !daemonRunning
+        ? Kirigami.Theme.negativeTextColor
+        : (inhibiting ? Kirigami.Theme.positiveTextColor : Kirigami.Theme.disabledTextColor)
+
     P5Support.DataSource {
         id: exec
         engine: "executable"
@@ -149,6 +161,27 @@ PlasmoidItem {
         runAction(daemonCall("UpdateRule", "ss", [shellQuote(name), shellQuote(expr)]), onResult)
     }
 
+    function renameRule(oldName, newName, onResult) {
+        runAction(daemonCall("RenameRule", "ss", [shellQuote(oldName), shellQuote(newName)]), onResult)
+    }
+
+    // Renames the rule first (if the name changed) and only then updates
+    // its expr, so a failed rename (e.g. name clash) never gets masked by
+    // a subsequent UpdateRule call against the old name.
+    function saveRule(oldName, newName, expr, onResult) {
+        if (newName !== oldName) {
+            renameRule(oldName, newName, (ok, error) => {
+                if (!ok) {
+                    onResult(false, error)
+                    return
+                }
+                root.updateRule(newName, expr, onResult)
+            })
+        } else {
+            root.updateRule(oldName, expr, onResult)
+        }
+    }
+
     function removeRule(name, onResult) {
         runAction(daemonCall("RemoveRule", "s", [shellQuote(name)]), onResult)
     }
@@ -162,7 +195,9 @@ PlasmoidItem {
     }
 
     compactRepresentation: Kirigami.Icon {
-        source: "preferences-system-power-management"
+        source: root.statusIconSource
+        isMask: true
+        color: root.statusIconColor
         active: mouseArea.containsMouse
 
         MouseArea {
@@ -181,7 +216,9 @@ PlasmoidItem {
         RowLayout {
             Layout.fillWidth: true
             Kirigami.Icon {
-                source: root.inhibiting ? "media-playback-start" : "media-playback-pause"
+                source: root.statusIconSource
+                isMask: true
+                color: root.statusIconColor
                 Layout.preferredWidth: Kirigami.Units.iconSizes.small
                 Layout.preferredHeight: Kirigami.Units.iconSizes.small
             }
@@ -265,6 +302,7 @@ PlasmoidItem {
                         icon.name: "document-edit"
                         display: QQC2.AbstractButton.IconOnly
                         onClicked: {
+                            nameField.text = ruleDelegate.modelData.name
                             exprField.text = ruleDelegate.modelData.expr
                             ruleDelegate.editing = true
                         }
@@ -278,29 +316,40 @@ PlasmoidItem {
                     }
                 }
 
-                RowLayout {
+                ColumnLayout {
                     Layout.fillWidth: true
                     visible: ruleDelegate.editing
+                    spacing: Kirigami.Units.smallSpacing
 
                     QQC2.TextField {
-                        id: exprField
+                        id: nameField
                         Layout.fillWidth: true
-                        font.family: "monospace"
-                        onAccepted: saveButton.clicked()
+                        placeholderText: "Rule name"
                     }
-                    PlasmaComponents.ToolButton {
-                        id: saveButton
-                        icon.name: "dialog-ok"
-                        display: QQC2.AbstractButton.IconOnly
-                        onClicked: root.updateRule(ruleDelegate.modelData.name, exprField.text, (ok, error) => {
-                            root.actionError = ok ? "" : ("Couldn't update rule: " + error)
-                            if (ok) ruleDelegate.editing = false
-                        })
-                    }
-                    PlasmaComponents.ToolButton {
-                        icon.name: "dialog-cancel"
-                        display: QQC2.AbstractButton.IconOnly
-                        onClicked: ruleDelegate.editing = false
+                    RowLayout {
+                        Layout.fillWidth: true
+
+                        QQC2.TextField {
+                            id: exprField
+                            Layout.fillWidth: true
+                            font.family: "monospace"
+                            onAccepted: saveButton.clicked()
+                        }
+                        PlasmaComponents.ToolButton {
+                            id: saveButton
+                            icon.name: "dialog-ok"
+                            display: QQC2.AbstractButton.IconOnly
+                            enabled: nameField.text.length > 0 && exprField.text.length > 0
+                            onClicked: root.saveRule(ruleDelegate.modelData.name, nameField.text, exprField.text, (ok, error) => {
+                                root.actionError = ok ? "" : ("Couldn't save rule: " + error)
+                                if (ok) ruleDelegate.editing = false
+                            })
+                        }
+                        PlasmaComponents.ToolButton {
+                            icon.name: "dialog-cancel"
+                            display: QQC2.AbstractButton.IconOnly
+                            onClicked: ruleDelegate.editing = false
+                        }
                     }
                 }
             }
@@ -331,6 +380,14 @@ PlasmoidItem {
                 enabled: root.daemonRunning
                 onClicked: root.reloadConfig()
             }
+        }
+
+        PlasmaComponents.Label {
+            Layout.fillWidth: true
+            horizontalAlignment: Text.AlignRight
+            opacity: 0.5
+            font.pointSize: Kirigami.Theme.smallFont.pointSize
+            text: "widget v0.2.0"
         }
 
         ColumnLayout {

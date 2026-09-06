@@ -503,3 +503,89 @@ clean.
   no per-evaluation process-spawn cost and no shell-injection surface from
   config content, but worth revisiting if a real case needs a live command
   result rather than a hook-toggled flag.
+
+## Post-milestone: status icon + rule renaming (v0.2.0)
+
+Two small feature requests after the widget had been in daily use for a
+while: make the panel icon visually distinguish "sleep allowed" from
+"sleep inhibited" (not just the tooltip text), and let a rule's name be
+edited, not just its expression.
+
+**Renaming.** Straightforward on the daemon side, following the exact
+shape of `add_rule`/`update_rule`/`remove_rule` in `state.rs`:
+`rename_rule(old_name, new_name)` rejects an unknown source name or a
+collision with an existing name, is a no-op success if the names are
+equal, and otherwise mutates `config.rules` in place and persists — same
+`commit()` path as everything else, so the live `RuleEngine` is rebuilt
+from the renamed config rather than patched. This is the first genuinely
+untested code path in the daemon (the write-up throughout milestones 1-8
+was all live/manual verification, no `#[cfg(test)]` anywhere yet), and it
+was worth a small `mod tests` in `state.rs` rather than another live D-Bus
+round-trip: renaming would otherwise have needed either a disposable
+second daemon (can't - `org.plasmakeepawake.Daemon1` is a single
+well-known bus name, no two instances can hold it) or exercising it
+against the real, already-running, already-inhibiting service, which
+wasn't worth the risk of a real inhibitor gap just to check a rename.
+Exposed as `RenameRule(old, new) -> (bool, string)` on the D-Bus interface,
+mirroring the other mutating methods. Widget side: the rule editor's
+pencil icon now also pre-fills a name field, and `saveRule()` calls
+`RenameRule` first (only if the name actually changed) and `UpdateRule`
+second, so a rename collision surfaces as its own error instead of being
+silently absorbed into (or masking) the expr update.
+
+**Status icon.** This took several wrong turns worth recording, since
+each one looked reasonable and failed for a different, non-obvious
+reason:
+
+1. First attempt: a single icon (`preferences-system-power-management`,
+   the one already used) with `isMask: true` and `color:` switched between
+   `Kirigami.Theme.positiveTextColor` (green, inhibiting) and
+   `disabledTextColor` (gray, allowed). Wrong immediately - that icon has
+   no `-symbolic` variant in Breeze at all (only in an unrelated, obscure
+   `char-white` theme), so `isMask` was masking an icon that didn't
+   resolve, rendering nothing.
+2. Second attempt: Breeze actually ships icons named for exactly this
+   state - `system-suspend-inhibited` / `system-suspend-uninhibited`,
+   found under `status/22` and `status/24` in both `breeze` and
+   `breeze-dark`. These looked perfect (literally named for the concept)
+   and resolve fine via `kiconfinder6`, but rendered blank in the widget's
+   `Kirigami.Icon` regardless. The reason is in Breeze's own
+   `index.theme`: that bucket is commented "Icon(s) for Plasma theme/
+   System Tray. Not particularly used on Plasma. - DO_NOT_USE_ANYWHERE_ELSE
+   - Monochrome" - reserved for the System Tray plasmoid's own internal
+   rendering path, not general reuse via a plain icon-name lookup.
+3. Landed on `system-suspend-symbolic` (an `actions/` context icon, not
+   `status/`) with the same `isMask` + `Kirigami.Theme.positiveTextColor`/
+   `disabledTextColor`/`negativeTextColor` (daemon unreachable) switch as
+   attempt 1. Confirmed via `kiconfinder6` that it resolves through the
+   same lookup path as icons already known to render correctly elsewhere
+   in this same widget (e.g. `document-edit`), and confirmed visually in
+   the popup's full representation.
+
+**The real time sink wasn't the icon - it was verifying it.**
+`plasmoidviewer -f planar` doesn't wrap a real panel, so it was never a
+valid test of the *compact* (panel/taskbar) representation - only ever a
+test of the full (popup) representation, which cost a full round of
+confusion before that was recognized. Then, once testing moved to the
+real panel: rebuilding and reinstalling via `install.sh` updates the files
+on disk (verified: `md5sum` on the installed vs. repo `main.qml` matched,
+`pacman -Q` showed the new version, `busctl introspect` showed the new
+`RenameRule` method) and restarting `plasma-plasmashell.service` is enough
+to make a *newly added* widget instance show up (see milestone 8's
+"widget not showing in Add Widgets" note) - but it is **not** enough to
+make an *already-placed* widget instance reload its QML. That instance
+kept running visibly stale code (an old icon, no rename field) through two
+full rebuild-reinstall-restart cycles, with every on-disk artifact
+confirmed correct the whole time. The fix was removing the widget from
+the panel and re-adding it fresh from the widget picker - a new applet
+instance with no chance of inherited state, not just a new process.
+**Lesson for next time a widget UI change doesn't seem to take effect
+despite a verified-correct install: don't trust "restart plasmashell" -
+remove and re-add the applet instance itself.**
+
+To make "is this actually the new build" independently checkable without
+re-deriving all of the above each time, bumped `daemon/Cargo.toml`,
+`packaging/PKGBUILD` (`pkgver`), and `widget/metadata.json` (`KPlugin.
+Version`) to `0.2.0`, and added a small `"widget vX.Y.Z"` label to the
+bottom of the widget's popup - a visible, no-guesswork way to confirm
+which build a given panel instance is actually running.

@@ -12,7 +12,8 @@
         "Icon": "preferences-system-power-management",
         "Id": "org.plasmakeepawake.widget",
         "License": "GPL-3.0-or-later",
-        "Name": "Plasma Keepawake"
+        "Name": "Plasma Keepawake",
+        "Version": "0.2.0"
     },
     "X-Plasma-API-Minimum-Version": "6.0"
 }

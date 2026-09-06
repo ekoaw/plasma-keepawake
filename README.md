@@ -80,6 +80,14 @@ daemon so a fix actually takes effect, still without touching your config.
 Then: right-click your panel → **Add Widgets…** → search "Plasma
 Keepawake" → drag it onto the panel.
 
+**Updating an already-added widget:** re-running `install.sh` (and
+restarting `plasmashell`) is enough to pick up a daemon change, but a
+widget *UI* change can need one more step — an already-placed widget
+instance can keep running its old QML even after `plasmashell` restarts.
+If the widget looks unchanged after an update (check the small "widget
+vX.Y.Z" label at the bottom of its popup), remove it from the panel and
+re-add it fresh from **Add Widgets…**.
+
 **Claude Code integration** is a separate, optional manual step (it edits
 `~/.claude/settings.json`, outside anything the package touches) — see
 "Claude Code integration" in [`PLAN.md`](PLAN.md) for the exact hook
@@ -183,11 +191,13 @@ All 8 planned milestones are done, and it's actually installed and
 running on this machine per the steps above, not just built — daemon
 active as a service holding a real inhibitor, widget on the real panel,
 Claude Code hooks wired in, all verified against live state rather than
-assumed. The widget itself is a status icon + rule list with toggles,
-add/edit/remove rules, and a reload button, all reading and writing the
-daemon's live state (see "Architecture" above for why it shells out to
-`busctl --json=short` rather than using a D-Bus-from-QML binding — there
-isn't one in Plasma 6 for a pure-QML plasmoid).
+assumed. The widget itself is a status icon (gray while sleep is allowed,
+green while a rule is inhibiting it, red if the daemon isn't reachable) +
+rule list with toggles, add/edit/rename/remove rules, and a reload button,
+all reading and writing the daemon's live state (see "Architecture" above
+for why it shells out to `busctl --json=short` rather than using a
+D-Bus-from-QML binding — there isn't one in Plasma 6 for a pure-QML
+plasmoid).
 
 For development, both pieces are testable in isolation without touching
 your real panel or a real config:

@@ -77,6 +77,27 @@ impl DaemonState {
         self.commit()
     }
 
+    /// Renames a rule in place, keeping its `expr`/`enabled`/live value.
+    /// A no-op (but still `Ok`) if `new_name == old_name`.
+    pub fn rename_rule(&mut self, old_name: &str, new_name: &str) -> Result<(), String> {
+        if old_name == new_name {
+            return Ok(());
+        }
+        if !self.config.rules.iter().any(|r| r.name == old_name) {
+            return Err(format!("no rule named {old_name:?}"));
+        }
+        if self.config.rules.iter().any(|r| r.name == new_name) {
+            return Err(format!("a rule named {new_name:?} already exists"));
+        }
+
+        for r in &mut self.config.rules {
+            if r.name == old_name {
+                r.name = new_name.to_string();
+            }
+        }
+        self.commit()
+    }
+
     /// Returns an error if no rule named `name` exists.
     pub fn remove_rule(&mut self, name: &str) -> Result<(), String> {
         let before = self.config.rules.len();
@@ -105,5 +126,66 @@ impl DaemonState {
         std::fs::write(&tmp_path, json).map_err(|e| e.to_string())?;
         std::fs::rename(&tmp_path, &self.config_path).map_err(|e| e.to_string())?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch_state(rule_names: &[&str]) -> DaemonState {
+        let path = std::env::temp_dir().join(format!(
+            "plasma-keepawake-test-{}-{}.json",
+            std::process::id(),
+            rule_names.join("-")
+        ));
+        let config = Config {
+            version: 1,
+            rules: rule_names
+                .iter()
+                .map(|name| ConfigRule {
+                    name: name.to_string(),
+                    enabled: true,
+                    expr: "true".to_string(),
+                })
+                .collect(),
+        };
+        DaemonState::new(path, config)
+    }
+
+    #[test]
+    fn rename_rule_updates_name_and_persists() {
+        let mut state = scratch_state(&["a", "b"]);
+        state.rename_rule("a", "renamed").unwrap();
+        assert!(state.config.rules.iter().any(|r| r.name == "renamed"));
+        assert!(!state.config.rules.iter().any(|r| r.name == "a"));
+
+        // Persisted, not just held in memory.
+        let reloaded = Config::load(&state.config_path).unwrap();
+        assert!(reloaded.rules.iter().any(|r| r.name == "renamed"));
+        std::fs::remove_file(&state.config_path).ok();
+    }
+
+    #[test]
+    fn rename_rule_rejects_unknown_source() {
+        let mut state = scratch_state(&["a"]);
+        assert!(state.rename_rule("nope", "renamed").is_err());
+        std::fs::remove_file(&state.config_path).ok();
+    }
+
+    #[test]
+    fn rename_rule_rejects_name_collision() {
+        let mut state = scratch_state(&["a", "b"]);
+        assert!(state.rename_rule("a", "b").is_err());
+        // Unchanged on failure.
+        assert!(state.config.rules.iter().any(|r| r.name == "a"));
+        std::fs::remove_file(&state.config_path).ok();
+    }
+
+    #[test]
+    fn rename_rule_same_name_is_a_noop_success() {
+        let mut state = scratch_state(&["a"]);
+        assert!(state.rename_rule("a", "a").is_ok());
+        std::fs::remove_file(&state.config_path).ok();
     }
 }

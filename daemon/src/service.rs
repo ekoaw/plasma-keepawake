@@ -97,6 +97,20 @@ impl DaemonIface {
         }
     }
 
+    /// Renames a rule (keeping its expr/enabled/live value) and persists
+    /// the rename. `(success, error)`.
+    fn rename_rule(&self, old_name: &str, new_name: &str) -> (bool, String) {
+        match self
+            .state
+            .lock()
+            .unwrap()
+            .rename_rule(old_name, new_name)
+        {
+            Ok(()) => (true, String::new()),
+            Err(e) => (false, e),
+        }
+    }
+
     /// Removes a rule and persists the removal. `(success, error)`.
     fn remove_rule(&self, name: &str) -> (bool, String) {
         match self.state.lock().unwrap().remove_rule(name) {

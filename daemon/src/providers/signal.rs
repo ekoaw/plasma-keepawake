@@ -59,17 +59,27 @@ fn is_fresh(path: &Path) -> bool {
 /// touched is treated as abandoned once `MAX_AGE` passes, so the signal
 /// self-heals within a bounded time instead of needing a manual cleanup.
 pub fn is_set(name: &str) -> bool {
+    count(name) > 0
+}
+
+/// How many independent producers currently assert this signal: 1 if the
+/// plain single-file form exists, the number of *fresh* files under
+/// `<name>.d/` otherwise, or 0 if neither does (`is_set` is just this being
+/// nonzero). Exists on its own so a UI can show e.g. how many concurrent
+/// Claude Code sessions are currently active, not just true/false.
+pub fn count(name: &str) -> usize {
     let dir = signals_dir();
     if dir.join(name).is_file() {
-        return true;
+        return 1;
     }
     let Ok(entries) = std::fs::read_dir(dir.join(format!("{name}.d"))) else {
-        return false;
+        return 0;
     };
     entries
         .filter_map(Result::ok)
         .map(|e| e.path())
-        .any(|p| p.is_file() && is_fresh(&p))
+        .filter(|p| p.is_file() && is_fresh(p))
+        .count()
 }
 
 /// Eagerly removes every stale (untouched for `MAX_AGE`) file across every
@@ -133,27 +143,37 @@ mod tests {
         let dot_d = signals_dir().join("thinking.d");
         std::fs::create_dir_all(&dot_d).unwrap();
         let fresh = dot_d.join("live-session");
+        let fresh2 = dot_d.join("another-live-session");
         let stale = dot_d.join("crashed-session");
         std::fs::write(&fresh, "").unwrap();
+        std::fs::write(&fresh2, "").unwrap();
         std::fs::write(&stale, "").unwrap();
         age(&stale, MAX_AGE.as_secs() + 60);
 
         assert!(
             is_set("thinking"),
-            "a fresh entry alongside a stale one should still count as set"
+            "fresh entries alongside a stale one should still count as set"
+        );
+        assert_eq!(
+            count("thinking"),
+            2,
+            "count should reflect concurrent fresh sessions, ignoring the stale one"
         );
 
+        std::fs::remove_file(&fresh2).unwrap();
         std::fs::remove_file(&fresh).unwrap();
         assert!(
             !is_set("thinking"),
             "once only a stale entry is left, the signal should self-clear with no manual cleanup"
         );
+        assert_eq!(count("thinking"), 0);
 
         std::fs::write(&fresh, "").unwrap();
         let removed = clear_stale();
         assert_eq!(removed, 1, "clear_stale should remove only the stale entry");
         assert!(fresh.exists(), "clear_stale must not touch a fresh entry");
         assert!(!stale.exists());
+        assert_eq!(count("thinking"), 1);
 
         std::fs::remove_dir_all(&scratch).ok();
     }

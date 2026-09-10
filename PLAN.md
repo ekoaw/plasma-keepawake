@@ -642,3 +642,32 @@ pointing it somewhere different would race.
 
 Bumped to `0.3.0` (daemon, PKGBUILD, widget metadata, and the popup's
 version label) alongside this.
+
+## Post-milestone: concurrent-session counter (v0.3.1)
+
+Small follow-up once the TTL fix above made "how many sessions are
+active" a real, meaningful number rather than just true/false: show it.
+Refactored `providers::signal::is_set` to be built on a new
+`count(name) -> usize` (1 for the plain single-file form, the number of
+*fresh* `.d` entries otherwise, 0 if neither) rather than duplicating the
+directory walk, exposed as `SignalCount(name) -> u32` on the D-Bus
+interface, and queried by the widget alongside the existing status poll
+(same `P5Support.DataSource`, same 3s `Timer` - a second `exec.run()` per
+tick, with its own early-return branch in `onNewData` so it doesn't fall
+into the generic pendingCallbacks-then-`refresh()` path, which would
+otherwise recurse into `refresh()` again on every tick).
+
+Deliberately specific to the one signal name `claude-thinking`, not a
+generic "show a count for any rule" feature - the counter's whole reason
+to exist is "how many Claude Code sessions are active," which only makes
+sense for a signal with multiple concurrent producers in the first place
+(an `mpris_playing` or `on_battery` rule has no "count" to speak of).
+Matches this project's existing stance of a general rule *engine* with
+cliamp/Claude Code as first-class concrete cases, not speculative
+generality for a UI element nothing else needs yet.
+
+Extended the existing `providers::signal` test (still one function, same
+reason as before - shared `XDG_STATE_HOME`) to cover `count()` directly,
+including two concurrent fresh entries alongside a stale one, to prove
+the number reflects live concurrency rather than just "at least one."
+Bumped to `0.3.1`.

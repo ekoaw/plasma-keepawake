@@ -32,6 +32,16 @@ PlasmoidItem {
     property var rules: [] // [{name, enabled, value, error, expr}]
     property string actionError: ""
     property string infoMessage: ""
+
+    // How many concurrent Claude Code sessions currently hold the
+    // "claude-thinking" signal - deliberately specific to that one signal
+    // name (not a generic per-rule count) rather than a whole extra layer
+    // of generality for a UI element only this integration needs; see
+    // README's "Motivating cases" for why cliamp/Claude Code get this kind
+    // of first-class treatment while the rule model stays general.
+    readonly property string claudeSignalName: "claude-thinking"
+    readonly property string claudeCountCmd: daemonCall("SignalCount", "s", [shellQuote(claudeSignalName)])
+    property int claudeSessionCount: 0
     // cmd string -> callback(ok, stdout), for calls whose own result (not
     // just the refreshed status) matters - AddRule/UpdateRule/RemoveRule.
     property var pendingCallbacks: ({})
@@ -68,6 +78,10 @@ PlasmoidItem {
                 root.applyStatus(exitCode === 0, stdout)
                 return
             }
+            if (sourceName === root.claudeCountCmd) {
+                root.applyClaudeCount(exitCode === 0, stdout)
+                return
+            }
 
             const callback = root.pendingCallbacks[sourceName]
             if (callback) {
@@ -86,6 +100,7 @@ PlasmoidItem {
 
     function refresh() {
         exec.run(statusCmd)
+        exec.run(claudeCountCmd)
     }
 
     // Runs a daemon method that returns "(b success, s error)" and reports
@@ -131,6 +146,18 @@ PlasmoidItem {
         } catch (e) {
             console.warn("plasma-keepawake widget: couldn't parse daemon status:", e, stdout)
             daemonRunning = false
+        }
+    }
+
+    function applyClaudeCount(ok, stdout) {
+        if (!ok) {
+            claudeSessionCount = 0
+            return
+        }
+        try {
+            claudeSessionCount = JSON.parse(stdout)["data"]
+        } catch (e) {
+            claudeSessionCount = 0
         }
     }
 
@@ -217,17 +244,36 @@ PlasmoidItem {
         onTriggered: root.refresh()
     }
 
-    compactRepresentation: Kirigami.Icon {
-        source: root.statusIconSource
-        isMask: true
-        color: root.statusIconColor
-        active: mouseArea.containsMouse
+    compactRepresentation: RowLayout {
+        spacing: Kirigami.Units.smallSpacing
 
-        MouseArea {
-            id: mouseArea
-            anchors.fill: parent
-            hoverEnabled: true
-            onClicked: root.expanded = !root.expanded
+        PlasmaComponents.Label {
+            visible: root.claudeSessionCount > 0
+            text: root.claudeSessionCount
+            font.bold: true
+            QQC2.ToolTip.text: "Claude Code sessions active"
+            QQC2.ToolTip.visible: countMouse.containsMouse
+            MouseArea {
+                id: countMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                onClicked: root.expanded = !root.expanded
+            }
+        }
+        Kirigami.Icon {
+            source: root.statusIconSource
+            isMask: true
+            color: root.statusIconColor
+            active: mouseArea.containsMouse
+            Layout.preferredWidth: Kirigami.Units.iconSizes.small
+            Layout.preferredHeight: Kirigami.Units.iconSizes.small
+
+            MouseArea {
+                id: mouseArea
+                anchors.fill: parent
+                hoverEnabled: true
+                onClicked: root.expanded = !root.expanded
+            }
         }
     }
 
@@ -238,6 +284,18 @@ PlasmoidItem {
 
         RowLayout {
             Layout.fillWidth: true
+            PlasmaComponents.Label {
+                visible: root.claudeSessionCount > 0
+                text: root.claudeSessionCount
+                font.bold: true
+                QQC2.ToolTip.text: "Claude Code sessions active"
+                QQC2.ToolTip.visible: fullCountMouse.containsMouse
+                MouseArea {
+                    id: fullCountMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                }
+            }
             Kirigami.Icon {
                 source: root.statusIconSource
                 isMask: true
@@ -423,7 +481,7 @@ PlasmoidItem {
             horizontalAlignment: Text.AlignRight
             opacity: 0.5
             font.pointSize: Kirigami.Theme.smallFont.pointSize
-            text: "widget v0.3.0"
+            text: "widget v0.3.1"
         }
 
         ColumnLayout {

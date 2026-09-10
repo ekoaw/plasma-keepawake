@@ -112,6 +112,15 @@ impl DaemonIface {
         }
     }
 
+    /// How many independent producers currently assert `signal(name)` as
+    /// true (see `providers::signal::count`) - 1 for the plain single-file
+    /// form, the number of currently-fresh `<name>.d/` entries otherwise,
+    /// or 0 if neither exists. Lets a UI show e.g. how many concurrent
+    /// Claude Code sessions are active rather than just true/false.
+    fn signal_count(&self, name: &str) -> u32 {
+        signal::count(name) as u32
+    }
+
     /// Immediately removes every stale `signal()` `.d` entry (untouched
     /// for a while - see `providers::signal`), rather than waiting for a
     /// future evaluation to notice and skip it on its own. Never removes

@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use crate::providers::signal;
+use crate::providers::{signal, ssh};
 use crate::state::DaemonState;
 
 pub const BUS_NAME: &str = "org.plasmakeepawake.Daemon1";
@@ -130,6 +130,16 @@ impl DaemonIface {
     /// removed.
     fn clear_stale_signals(&self) -> u32 {
         signal::clear_stale() as u32
+    }
+
+    /// `(count, hosts)` for currently active SSH sessions - `hosts` is
+    /// each session's `RemoteHost` (see `providers::ssh`), comma-joined in
+    /// the same order `count` reflects, `""` if there are none. Lets a UI
+    /// show e.g. "2 SSH sessions" plus which hosts on hover, not just
+    /// `ssh_active()`'s true/false.
+    fn ssh_status(&self) -> (u32, String) {
+        let hosts = ssh::active_remote_hosts();
+        (hosts.len() as u32, hosts.join(", "))
     }
 
     /// Removes a rule and persists the removal. `(success, error)`.

@@ -47,6 +47,24 @@ where
     proxy.get_property::<T>(property).ok()
 }
 
+/// Calls a no-argument D-Bus method on an arbitrary object, returning
+/// `None` on any failure. Mirrors `get_property`'s "safe default" policy —
+/// callers turn `None` into whatever default makes sense for that provider.
+pub fn call_method<T>(bus: Bus, destination: &str, path: &str, interface: &str, method: &str) -> Option<T>
+where
+    T: serde::de::DeserializeOwned + zbus::zvariant::Type,
+{
+    let conn = match bus {
+        Bus::Session => session(),
+        Bus::System => system(),
+    }
+    .as_ref()?;
+
+    let proxy = zbus::blocking::Proxy::new(conn, destination.to_string(), path.to_string(), interface.to_string())
+        .ok()?;
+    proxy.call(method, &()).ok()
+}
+
 #[derive(Clone, Copy)]
 pub enum Bus {
     Session,

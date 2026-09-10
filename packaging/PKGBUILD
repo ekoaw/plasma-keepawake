@@ -8,7 +8,7 @@
 # sha256sums and drop the $startdir/.. references below.
 
 pkgname=plasma-keepawake
-pkgver=0.3.2
+pkgver=0.4.1
 pkgrel=1
 pkgdesc="Rule-driven sleep inhibitor for KDE Plasma (daemon + widget)"
 arch=('x86_64')

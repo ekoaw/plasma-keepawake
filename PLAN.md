@@ -692,3 +692,87 @@ references `claude-thinking` (matched by substring on `expr`, reusing the
 already-fetched `claudeSessionCount` - no new daemon-side plumbing
 needed), removing the icon-row changes entirely rather than keeping both.
 Bumped to `0.3.2`.
+
+## Post-milestone: SSH session provider (v0.4.0)
+
+Third motivating case, added the same way the first two were: a new
+provider function (`ssh_active()`, backed by `providers/ssh.rs`), not a
+special case anywhere else in the daemon. "Don't sleep while an SSH
+session is connected" reduces to "is there a currently-open logind
+session whose PAM `Service` is `sshd`" - queried fresh via
+`Manager.ListSessions` + per-session `Service` property reads on the
+system bus, the same on-demand-D-Bus-call-per-evaluation policy every
+other provider already uses (see `dbus.rs`'s module doc), not a new kind
+of polling. Added a small `dbus::call_method` helper alongside the
+existing `get_property` for this, since `ListSessions` is a method call
+rather than a property read - the one bit of shared plumbing this
+actually needed.
+
+`Service == "sshd"` was picked over the session's own `Type` (`tty`) or
+`Remote` (`true`) fields specifically because neither of those actually
+means "this is SSH" - a local tty login or a different kind of remote
+session would trip them too, while `Service` is what pam_systemd tags
+the session with based on which PAM stack authenticated it. Verified
+empirically rather than assumed, given this machine runs OpenSSH 10.5's
+newer split `sshd`/`sshd-auth`/`sshd-session` binaries (a real, non-
+theoretical reason to doubt "it's still called sshd" from memory): with
+the user's explicit OK, added a throwaway SSH keypair to
+`~/.ssh/authorized_keys` for one loopback connection, confirmed
+`Service = "sshd"` (not `sshd-session`) via `busctl` against the live
+session object, then removed the throwaway key immediately after and
+diffed `authorized_keys` back to its exact prior content. Re-verified
+against the real daemon binary end to end (not just the unit test) for
+all four requested transitions - `cargo run -- --check` against a
+scratch config with just `ssh_active()`, toggled by real loopback SSH
+connections: 0→1 (false→true), 1→2 (still true, confirmed via
+`ListSessions` showing both session objects), 2→1 (still true), 1→0
+(true→false) - restoring `authorized_keys` again afterward.
+
+Unit-testable part is the counting/filtering logic, not the D-Bus fetch
+itself (consistent with this project's existing testing scope - see
+`providers::signal`'s tests): split `count()` into the live D-Bus fetch
+and a pure `count_ssh(&[Option<String>])` that counts `Some("sshd")`
+entries, then tested that directly against the exact four transitions
+asked for (0→1, 1→2, 2→1, 1→0) plus a session whose `Service` couldn't
+be read at all.
+
+Deliberately not added to any already-deployed config - `ssh-session-
+active` went into `daemon/examples/config.json` only, matching
+`install.sh`'s existing "never touches an existing config" policy. A
+user opts in by hand-editing their config or adding it through the
+widget, same as any other rule. Bumped to `0.4.0` (a new provider
+primitive, not just a fix).
+
+## Post-milestone: SSH session count + remote host tooltip (v0.4.1)
+
+Follow-up once `ssh_active()` existed: asked what status info would
+actually be useful (count vs. remote IP) before building anything, rather
+than guessing - discussed the tradeoff (a count is simple and matches the
+Claude counter precedent; per-session IPs are more informative but add
+UI surface) and landed on both, at different visibility levels: count
+inline (mirroring Claude's "[N]" rule-name suffix exactly), remote hosts
+in a hover tooltip rather than inline, so the "who" is available without
+permanently cluttering the panel.
+
+Refactored `providers::ssh::count()` to derive from a new
+`active_remote_hosts() -> Vec<String>`, which fetches each SSH session's
+`RemoteHost` (as logind reports it - the client's IP, `"::1"` for the
+loopback connections used to verify this) alongside the `Service` check
+that was already there, one entry per session in `ListSessions`' order,
+so `.len()` still equals `count()` and an empty/unreadable `RemoteHost`
+still produces a slot rather than silently under-counting. The pure,
+tested part of this changed shape to match: `count_ssh(&[Option<String>])`
+became `ssh_hosts(&[(Option<String>, Option<String>)])`, re-tested
+against the same four transitions plus explicit unreadable-`Service` and
+unreadable-`RemoteHost` cases (the latter still counts, as `""`).
+
+New D-Bus method `SshStatus() -> (u32, string)` (count, comma-joined
+hosts) alongside the existing boolean-only `ssh_active()` Rhai function -
+`ssh_active()` didn't need to change, since the rule engine only ever
+needed the boolean. Widget wiring mirrors Claude's counter exactly (own
+`exec.run()` in `refresh()`, its own early-return branch in `onNewData`
+to avoid recursing into `refresh()` again): a "[N]" suffix on whichever
+rule's expr contains `ssh_active()`, plus `QQC2.ToolTip.text: root.
+sshHosts` on that same label, shown on hover via a `MouseArea` overlay -
+the same pattern the per-rule status icon already used for its own
+tooltip. Bumped to `0.4.1`.

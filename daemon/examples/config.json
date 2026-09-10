@@ -12,6 +12,11 @@
       "expr": "signal(\"claude-thinking\")"
     },
     {
+      "name": "ssh-session-active",
+      "enabled": true,
+      "expr": "ssh_active()"
+    },
+    {
       "name": "media-but-not-on-battery",
       "enabled": false,
       "expr": "mpris_playing(\"cliamp\") && !on_battery()"

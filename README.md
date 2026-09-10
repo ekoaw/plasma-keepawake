@@ -7,14 +7,15 @@ running," "is a custom signal set" — and a background daemon holds a real
 systemd-logind sleep inhibitor for as long as any enabled rule is true — the
 same mechanism `systemd-inhibit` and media players like cliamp itself use.
 
-Motivating cases (the two it needs to handle on day one):
+Motivating cases (the ones it needs to handle on day one):
 
 - Don't sleep while **cliamp** (a music player) is actively playing (via MPRIS).
 - Don't sleep while **Claude Code** is actively working, signaled by a Claude
   Code hook touching a flag file.
+- Don't sleep while an **SSH session** is connected to this machine.
 
-The rule model is intentionally general — those two are just the first two
-`expr` strings in the config, not special-cased in the daemon.
+The rule model is intentionally general — those are just `expr` strings in
+the config, not special-cased in the daemon.
 
 ## Architecture
 
@@ -166,6 +167,7 @@ lock.
 | `mpris_playing(name)` | MPRIS (`org.mpris.MediaPlayer2.<name>`) | true iff `PlaybackStatus == Playing` |
 | `process_running(pattern)` | `/proc` scan | polled, no kernel event exists for arbitrary process start |
 | `on_battery()` / `on_ac()` | UPower (system bus) | queried on demand; `false`/AC assumed if UPower isn't running |
+| `ssh_active()` | systemd-logind (system bus) | true iff any current session has `Service == "sshd"`; `false` if logind isn't reachable |
 | `signal(name)` | `$XDG_STATE_HOME/plasma-keepawake/signals/<name>` (a flag file) **or** `signals/<name>.d/` (a directory) | true if the flag file exists, or the `.d` directory has ≥1 file in it — see below |
 
 `signal()` is how Claude Code integration works, and it's why there are
@@ -194,7 +196,22 @@ The widget also shows how many concurrent Claude Code sessions currently
 hold `claude-thinking` as a "[N]" suffix on the name of whichever rule's
 expr references that signal (e.g. "claude-code-active [2]") — hidden when
 there's none. This one is specific to that signal name, not a generic
-per-rule counter, since it exists for that one integration's use case.
+per-rule counter, since it exists for that one integration's use case. The
+`ssh_active()` rule gets the same "[N]" treatment for concurrent SSH
+sessions, plus each session's remote host on hover (comma-joined, empty
+when there's none to show).
+
+`ssh_active()` checks `Service == "sshd"` on each of logind's currently
+open sessions, rather than `Type`/`Remote` — those are both `true` for an
+SSH login too, but don't distinguish it from other remote-but-not-SSH
+cases, and `Service` does. Confirmed empirically against this machine
+(including with OpenSSH 10.5's newer split `sshd`/`sshd-session`
+binaries) rather than assumed — see `PLAN.md`. It's included in
+`daemon/examples/config.json` as `ssh-session-active`, not added to any
+already-deployed config automatically — same "never touches your rules"
+policy `install.sh` already follows for the config file in general;
+add it yourself (hand-edit the config, or the widget's Add rule form)
+if you want it.
 
 New primitives (e.g. "is a given window focused") are added as new Rust
 functions registered with the Rhai engine — not a plugin/loadable-module

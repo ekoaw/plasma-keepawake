@@ -42,6 +42,16 @@ PlasmoidItem {
     readonly property string claudeSignalName: "claude-thinking"
     readonly property string claudeCountCmd: daemonCall("SignalCount", "s", [shellQuote(claudeSignalName)])
     property int claudeSessionCount: 0
+
+    // How many SSH sessions are currently connected, and their remote
+    // hosts (comma-joined) for a tooltip - same "specific to this one
+    // integration, not a generic per-rule count" reasoning as Claude's
+    // counter above.
+    readonly property string sshExprMarker: "ssh_active()"
+    readonly property string sshStatusCmd: daemonCall("SshStatus", "", [])
+    property int sshSessionCount: 0
+    property string sshHosts: ""
+
     // cmd string -> callback(ok, stdout), for calls whose own result (not
     // just the refreshed status) matters - AddRule/UpdateRule/RemoveRule.
     property var pendingCallbacks: ({})
@@ -82,6 +92,10 @@ PlasmoidItem {
                 root.applyClaudeCount(exitCode === 0, stdout)
                 return
             }
+            if (sourceName === root.sshStatusCmd) {
+                root.applySshStatus(exitCode === 0, stdout)
+                return
+            }
 
             const callback = root.pendingCallbacks[sourceName]
             if (callback) {
@@ -101,6 +115,7 @@ PlasmoidItem {
     function refresh() {
         exec.run(statusCmd)
         exec.run(claudeCountCmd)
+        exec.run(sshStatusCmd)
     }
 
     // Runs a daemon method that returns "(b success, s error)" and reports
@@ -160,6 +175,22 @@ PlasmoidItem {
             claudeSessionCount = JSON.parse(stdout)["data"][0]
         } catch (e) {
             claudeSessionCount = 0
+        }
+    }
+
+    function applySshStatus(ok, stdout) {
+        if (!ok) {
+            sshSessionCount = 0
+            sshHosts = ""
+            return
+        }
+        try {
+            const d = JSON.parse(stdout)["data"]
+            sshSessionCount = d[0]
+            sshHosts = d[1]
+        } catch (e) {
+            sshSessionCount = 0
+            sshHosts = ""
         }
     }
 
@@ -330,17 +361,30 @@ PlasmoidItem {
                         onToggled: root.setRuleEnabled(ruleDelegate.modelData.name, checked)
                     }
                     PlasmaComponents.Label {
+                        id: ruleNameLabel
+                        readonly property bool isSshRule: ruleDelegate.modelData.expr.indexOf(root.sshExprMarker) !== -1
                         Layout.fillWidth: true
                         // "[N]" appended for a rule whose expr references
-                        // the claude-thinking signal, while N (currently
-                        // active Claude Code sessions) is nonzero - not a
-                        // generic per-rule count, just this one signal's.
+                        // the claude-thinking signal or ssh_active(),
+                        // while N (currently active sessions) is nonzero -
+                        // not a generic per-rule count, just those two
+                        // integrations' own counters.
                         text: ruleDelegate.modelData.name
                             + (ruleDelegate.modelData.expr.indexOf(root.claudeSignalName) !== -1
                                     && root.claudeSessionCount > 0
                                 ? " [" + root.claudeSessionCount + "]"
                                 : "")
+                            + (isSshRule && root.sshSessionCount > 0
+                                ? " [" + root.sshSessionCount + "]"
+                                : "")
                         elide: Text.ElideRight
+                        QQC2.ToolTip.text: root.sshHosts
+                        QQC2.ToolTip.visible: isSshRule && root.sshSessionCount > 0 && nameMouse.containsMouse
+                        MouseArea {
+                            id: nameMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                        }
                     }
                     Kirigami.Icon {
                         Layout.preferredWidth: Kirigami.Units.iconSizes.small
@@ -460,7 +504,7 @@ PlasmoidItem {
             horizontalAlignment: Text.AlignRight
             opacity: 0.5
             font.pointSize: Kirigami.Theme.smallFont.pointSize
-            text: "widget v0.3.2"
+            text: "widget v0.4.1"
         }
 
         ColumnLayout {

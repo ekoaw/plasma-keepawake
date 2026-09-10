@@ -3,6 +3,7 @@ mod mpris;
 mod power;
 mod process;
 pub mod signal;
+pub mod ssh;
 
 use rhai::Engine;
 
@@ -19,4 +20,5 @@ pub fn register_all(engine: &mut Engine) {
     engine.register_fn("on_ac", || !power::on_battery());
     engine.register_fn("process_running", process::running);
     engine.register_fn("signal", signal::is_set);
+    engine.register_fn("ssh_active", ssh::active);
 }

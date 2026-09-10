@@ -2,7 +2,7 @@ mod dbus;
 mod mpris;
 mod power;
 mod process;
-mod signal;
+pub mod signal;
 
 use rhai::Engine;
 

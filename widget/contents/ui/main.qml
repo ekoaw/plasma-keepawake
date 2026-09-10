@@ -31,6 +31,7 @@ PlasmoidItem {
     property string reloadError: ""
     property var rules: [] // [{name, enabled, value, error, expr}]
     property string actionError: ""
+    property string infoMessage: ""
     // cmd string -> callback(ok, stdout), for calls whose own result (not
     // just the refreshed status) matters - AddRule/UpdateRule/RemoveRule.
     property var pendingCallbacks: ({})
@@ -184,6 +185,28 @@ PlasmoidItem {
 
     function removeRule(name, onResult) {
         runAction(daemonCall("RemoveRule", "s", [shellQuote(name)]), onResult)
+    }
+
+    // ClearStaleSignals returns a bare count (not the (success, error)
+    // shape runAction expects), so it gets its own small parse instead.
+    function clearStaleSignals() {
+        const cmd = daemonCall("ClearStaleSignals", "", [])
+        pendingCallbacks[cmd] = (ok, stdout) => {
+            if (!ok) {
+                root.actionError = "Couldn't clear stale signals"
+                return
+            }
+            try {
+                const n = JSON.parse(stdout)["data"]
+                root.actionError = ""
+                root.infoMessage = n === 0
+                    ? "No stale signals to clear"
+                    : "Cleared " + n + " stale signal file" + (n === 1 ? "" : "s")
+            } catch (e) {
+                root.actionError = "Couldn't parse daemon response: " + e
+            }
+        }
+        exec.run(cmd)
     }
 
     Timer {
@@ -376,6 +399,11 @@ PlasmoidItem {
             }
             Item { Layout.fillWidth: true }
             PlasmaComponents.Button {
+                text: "Clear stuck signals"
+                enabled: root.daemonRunning
+                onClicked: root.clearStaleSignals()
+            }
+            PlasmaComponents.Button {
                 text: "Reload config"
                 enabled: root.daemonRunning
                 onClicked: root.reloadConfig()
@@ -383,11 +411,19 @@ PlasmoidItem {
         }
 
         PlasmaComponents.Label {
+            visible: root.infoMessage.length > 0
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            opacity: 0.7
+            text: root.infoMessage
+        }
+
+        PlasmaComponents.Label {
             Layout.fillWidth: true
             horizontalAlignment: Text.AlignRight
             opacity: 0.5
             font.pointSize: Kirigami.Theme.smallFont.pointSize
-            text: "widget v0.2.0"
+            text: "widget v0.3.0"
         }
 
         ColumnLayout {

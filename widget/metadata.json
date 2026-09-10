@@ -13,7 +13,7 @@
         "Id": "org.plasmakeepawake.widget",
         "License": "GPL-3.0-or-later",
         "Name": "Plasma Keepawake",
-        "Version": "0.2.0"
+        "Version": "0.3.0"
     },
     "X-Plasma-API-Minimum-Version": "6.0"
 }

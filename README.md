@@ -180,6 +180,16 @@ removes only that one; the signal stays true as long as *any* file remains
 in the directory. See `PLAN.md`'s "Claude Code integration" section for
 the concrete hook config (needs `jq`) and how this was verified.
 
+A `.d` entry also self-heals if its producer crashes instead of exiting
+cleanly (so its own cleanup — e.g. Claude Code's `Stop` hook — never
+runs): an entry only counts while it's been touched within the last 10
+minutes, and `PreToolUse` already re-touches it on every tool call in a
+live session, so a crashed session's stuck flag stops counting on its own
+within that window rather than blocking sleep forever. The widget's
+**Clear stuck signals** button does the same cleanup immediately instead
+of waiting — it only ever removes already-stale entries, never one a
+producer is still actively touching.
+
 New primitives (e.g. "is a given window focused") are added as new Rust
 functions registered with the Rhai engine — not a plugin/loadable-module
 system. See `PLAN.md` for why that tradeoff was chosen over a real

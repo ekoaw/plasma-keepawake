@@ -1,5 +1,6 @@
 use std::sync::{Arc, Mutex};
 
+use crate::providers::signal;
 use crate::state::DaemonState;
 
 pub const BUS_NAME: &str = "org.plasmakeepawake.Daemon1";
@@ -109,6 +110,17 @@ impl DaemonIface {
             Ok(()) => (true, String::new()),
             Err(e) => (false, e),
         }
+    }
+
+    /// Immediately removes every stale `signal()` `.d` entry (untouched
+    /// for a while - see `providers::signal`), rather than waiting for a
+    /// future evaluation to notice and skip it on its own. Never removes
+    /// a fresh entry, so it can't clear a signal some producer is still
+    /// actively asserting - it's a "run the self-healing now" button, not
+    /// a "force-clear everything" one. Returns how many files were
+    /// removed.
+    fn clear_stale_signals(&self) -> u32 {
+        signal::clear_stale() as u32
     }
 
     /// Removes a rule and persists the removal. `(success, error)`.

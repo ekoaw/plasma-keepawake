@@ -589,3 +589,56 @@ re-deriving all of the above each time, bumped `daemon/Cargo.toml`,
 Version`) to `0.2.0`, and added a small `"widget vX.Y.Z"` label to the
 bottom of the widget's popup - a visible, no-guesswork way to confirm
 which build a given panel instance is actually running.
+
+## Post-milestone: self-healing signal flags (v0.3.0)
+
+Known limitation carried since the per-session signal fix (milestone
+5/8's revision): a Claude Code session that crashes instead of exiting
+cleanly never runs its `Stop` hook, so its `signals/claude-thinking.d/
+<session_id>` file is never removed - and since `is_set` originally just
+checked for *any* file in the `.d` directory, that stuck file would keep
+the daemon inhibiting sleep forever, for a condition that was never
+actually true again. Asked "what's the best fix - a manual clean button,
+auto-clean on daemon startup, or something else" and picked neither of
+the two offered: auto-clean-on-startup only helps on the rare occasion
+the long-running daemon service actually restarts, and a manual button
+alone still requires a human to notice and act.
+
+Landed on a TTL/heartbeat instead, in `providers/signal.rs`: a `.d` entry
+only counts toward `is_set` if its mtime is within `MAX_AGE` (10 minutes)
+of now, not merely if it exists. The reason this needed no hook config
+change at all: the existing `PreToolUse` hook already runs `touch` on
+every tool call in a session, which already refreshes the file's mtime
+throughout a healthy session for free - it just wasn't being used as a
+liveness signal until now. A crashed session's file simply stops being
+touched and ages out within `MAX_AGE`, so the inhibitor releases itself
+without any daemon restart or manual step. Deliberately scoped to `.d`
+entries only, not the plain single-file form: that form's documented
+contract is set-once/clear-once with no implicit expiry (e.g. a
+hypothetical producer that asserts a condition once and doesn't touch it
+again), and applying a TTL there would silently break that contract for
+any such producer. `MAX_AGE` = 10 minutes is chosen to comfortably outlast
+a long single tool call or a big non-tool response in a real session,
+while still bounding how long a crash can block sleep for.
+
+Added the manual button too, as the requested complement rather than the
+whole fix: `ClearStaleSignals` on the D-Bus interface (backed by a new
+`providers::signal::clear_stale()`, walking every `<name>.d/` directory
+under the signals dir and removing only entries that already fail the
+same freshness check `is_set` uses) and a "Clear stuck signals" button in
+the widget, for an immediate override instead of waiting out `MAX_AGE`.
+It can only ever remove already-stale entries - never a signal some
+producer is still actively touching - so it's a "run the self-healing
+now" action, not a "force-clear everything, active or not" one.
+
+This is also the first provider-level code with unit tests (previously
+only `state.rs`'s `rename_rule` had any): waiting out a real 10-minute
+staleness window live wasn't practical, so the test uses
+`File::set_modified` to deterministically backdate a file's mtime past
+`MAX_AGE` instead. All of it lives in one `#[test]` function rather than
+several, since `signals_dir()` reads the process-wide `XDG_STATE_HOME` env
+var and cargo runs tests in parallel by default - two tests each
+pointing it somewhere different would race.
+
+Bumped to `0.3.0` (daemon, PKGBUILD, widget metadata, and the popup's
+version label) alongside this.

@@ -155,7 +155,9 @@ PlasmoidItem {
             return
         }
         try {
-            claudeSessionCount = JSON.parse(stdout)["data"]
+            // busctl --json=short wraps even a single scalar return value
+            // in an array: {"type":"u","data":[1]}, not {"data":1}.
+            claudeSessionCount = JSON.parse(stdout)["data"][0]
         } catch (e) {
             claudeSessionCount = 0
         }
@@ -244,36 +246,17 @@ PlasmoidItem {
         onTriggered: root.refresh()
     }
 
-    compactRepresentation: RowLayout {
-        spacing: Kirigami.Units.smallSpacing
+    compactRepresentation: Kirigami.Icon {
+        source: root.statusIconSource
+        isMask: true
+        color: root.statusIconColor
+        active: mouseArea.containsMouse
 
-        PlasmaComponents.Label {
-            visible: root.claudeSessionCount > 0
-            text: root.claudeSessionCount
-            font.bold: true
-            QQC2.ToolTip.text: "Claude Code sessions active"
-            QQC2.ToolTip.visible: countMouse.containsMouse
-            MouseArea {
-                id: countMouse
-                anchors.fill: parent
-                hoverEnabled: true
-                onClicked: root.expanded = !root.expanded
-            }
-        }
-        Kirigami.Icon {
-            source: root.statusIconSource
-            isMask: true
-            color: root.statusIconColor
-            active: mouseArea.containsMouse
-            Layout.preferredWidth: Kirigami.Units.iconSizes.small
-            Layout.preferredHeight: Kirigami.Units.iconSizes.small
-
-            MouseArea {
-                id: mouseArea
-                anchors.fill: parent
-                hoverEnabled: true
-                onClicked: root.expanded = !root.expanded
-            }
+        MouseArea {
+            id: mouseArea
+            anchors.fill: parent
+            hoverEnabled: true
+            onClicked: root.expanded = !root.expanded
         }
     }
 
@@ -284,18 +267,6 @@ PlasmoidItem {
 
         RowLayout {
             Layout.fillWidth: true
-            PlasmaComponents.Label {
-                visible: root.claudeSessionCount > 0
-                text: root.claudeSessionCount
-                font.bold: true
-                QQC2.ToolTip.text: "Claude Code sessions active"
-                QQC2.ToolTip.visible: fullCountMouse.containsMouse
-                MouseArea {
-                    id: fullCountMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                }
-            }
             Kirigami.Icon {
                 source: root.statusIconSource
                 isMask: true
@@ -360,7 +331,15 @@ PlasmoidItem {
                     }
                     PlasmaComponents.Label {
                         Layout.fillWidth: true
+                        // "[N]" appended for a rule whose expr references
+                        // the claude-thinking signal, while N (currently
+                        // active Claude Code sessions) is nonzero - not a
+                        // generic per-rule count, just this one signal's.
                         text: ruleDelegate.modelData.name
+                            + (ruleDelegate.modelData.expr.indexOf(root.claudeSignalName) !== -1
+                                    && root.claudeSessionCount > 0
+                                ? " [" + root.claudeSessionCount + "]"
+                                : "")
                         elide: Text.ElideRight
                     }
                     Kirigami.Icon {
@@ -481,7 +460,7 @@ PlasmoidItem {
             horizontalAlignment: Text.AlignRight
             opacity: 0.5
             font.pointSize: Kirigami.Theme.smallFont.pointSize
-            text: "widget v0.3.1"
+            text: "widget v0.3.2"
         }
 
         ColumnLayout {

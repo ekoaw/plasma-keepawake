@@ -671,3 +671,24 @@ reason as before - shared `XDG_STATE_HOME`) to cover `count()` directly,
 including two concurrent fresh entries alongside a stale one, to prove
 the number reflects live concurrency rather than just "at least one."
 Bumped to `0.3.1`.
+
+First attempt at showing it put the number next to the status icon
+(compact panel icon and popup heading), which turned out to have two
+separate problems. First, the count silently never displayed on the real
+panel at all: querying the live daemon directly with `busctl` showed why
+- `busctl --json=short` wraps even a single scalar return value in an
+array (`{"type":"u","data":[1]}`, not `{"data":1}`), and the widget's
+`applyClaudeCount` was reading `["data"]` directly instead of `["data"]
+[0]`, so `claudeSessionCount` held the array `[1]` instead of the number
+`1` (fixed alongside the second problem, in `0.3.2`, and worth noting for
+next time a `busctl --json=short` single-value method return doesn't seem
+to parse: check for this exact wrapping before assuming the D-Bus call
+itself failed). Second and more simply: it just wasn't the right spot -
+after seeing it still blank in `plasmoidviewer`, asked what to do instead
+of continuing to debug the icon placement, and got "if difficult, just
+add postfix counter in the rule name eg. 'claude-code-active [1]'".
+Landed there instead: a "[N]" suffix on the name of whichever rule's expr
+references `claude-thinking` (matched by substring on `expr`, reusing the
+already-fetched `claudeSessionCount` - no new daemon-side plumbing
+needed), removing the icon-row changes entirely rather than keeping both.
+Bumped to `0.3.2`.

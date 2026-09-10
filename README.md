@@ -190,11 +190,11 @@ within that window rather than blocking sleep forever. The widget's
 of waiting — it only ever removes already-stale entries, never one a
 producer is still actively touching.
 
-The widget also shows a small number next to the status icon (compact
-panel icon and the popup heading alike) for how many concurrent Claude
-Code sessions currently hold `claude-thinking` — hidden when there are
-none. This one is specific to that signal name, not a generic per-rule
-counter, since it exists for that one integration's use case.
+The widget also shows how many concurrent Claude Code sessions currently
+hold `claude-thinking` as a "[N]" suffix on the name of whichever rule's
+expr references that signal (e.g. "claude-code-active [2]") — hidden when
+there's none. This one is specific to that signal name, not a generic
+per-rule counter, since it exists for that one integration's use case.
 
 New primitives (e.g. "is a given window focused") are added as new Rust
 functions registered with the Rhai engine — not a plugin/loadable-module
